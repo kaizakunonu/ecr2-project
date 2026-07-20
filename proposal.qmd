@@ -6,24 +6,14 @@ author:
     affiliation: "The Kids Research Institute Australia"
     email: Victoire.Nsabatien@thekids.org.au
   - name: "Arsene Bokulu"
-    affiliation: "Institut National de la Recherche Biomédicale (INRB)"
+    affiliation: "Institut National de Recherche Biomédicale (INRB)"
     email: arsenebokulu01@gmail.com
   - name: "Kaiza Ilomo"
     affiliation: "Ifakara Health Institute"
     email: kilomo@ihi.or.tz
 date: "2026-07-15"
 abstract: |
-  Malaria vector surveillance in the Democratic Republic of Congo (DRC) depends
-  on a sparse network of sentinel village sites that are costly to reach and
-  maintain. This proposal sets out a geospatial project to quantify geographic
-  accessibility — travel time to candidate sites — and combine it with vector
-  density and human-settlement indicators to make surveillance site selection
-  more efficient, more representative, and more affordable. Building on a
-  province-wide entomological dataset collected during the Victoire's PhD in
-  Kasaï-Central, the project will produce provincial travel-time surfaces, a
-  quadrant prioritisation framework (accessibility × vector density), and
-  practical planning tools for the NMCP. The proposal is scoped as an ECR study
-  intended for peer-reviewed publication.
+  Malaria remains a major public health challenge in the Democratic Republic of Congo (DRC), where effective vector control relies on strong entomological surveillance systems. In DRC, sentinel surveillance sites are used to generate information on malaria vectors and support surveillance and vector-control decision-making. In Kasaï-Central Province, however, the provincial sentinel surveillance system currently relies on a single site located within one of the province’s 26 health zones. Given the province’s large geographic extent and environmental diversity, information generated from this site may not adequately represent conditions across the entire province. In addition, current site-selection does not consider seasonal accessibility and travel time, which may constrain the ability to sustain surveillance activities across seasons.  This highlights the need for surveillance sites that are both operationally accessible and environmentally representative.This ECR project aims to evaluate the current sentinel surveillance network and identify priority locations for entomological surveillance in Kasaï-Central Province. Travel-time modelling and environmental suitability analysis will be used to assess accessibility and habitat suitability for malaria vectors across the province. The resulting information will be integrated to identify surveillance coverage gaps and prioritize existing and potential sentinel sites. Expected outputs include seasonal accessibility maps, an environmental suitability map, a surveillance coverage gap map, and a ranked list of priority surveillance locations. The findings of this project will support the evidence-based selection of sentinel sites that are both operationally accessible across seasons and environmentally representative of conditions across Kasaï-Central Province.
 format:
   html:
     toc: true
@@ -41,263 +31,296 @@ format:
     geometry:
       - margin=1in
 bibliography: references.bib
+editor: 
+  markdown: 
+    wrap: 72
 ---
 
 ## Background and rationale
 
-Malaria remains a leading cause of morbidity and mortality in the Democratic
-Republic of Congo (DRC), and the National Malaria Control Programme (NMCP)
-relies on entomological surveillance to track vector species composition,
-abundance, and behaviour. Surveillance is organised through **sentinel village
-sites** where vectors are sampled longitudinally. Because DRC is vast and its
-road network is sparse and often seasonal, the cost of reaching and servicing a
-site — and the practicality of training and supervising field teams — is
-dominated by **geographic accessibility**, i.e. travel time across the
-landscape rather than straight-line distance.
+Malaria remains a leading cause of morbidity and mortality in the
+Democratic Republic of Congo (DRC), where effective vector control
+relies on entomological surveillance. Sentinel surveillance sites
+provide critical information on malaria vectors and support
+evidence-based surveillance and vector-control decision-making. Under
+the initial national surveillance framework, each of the DRC's 26
+provinces was represented by a single sentinel site.
 
-Site selection today is largely driven by convenience and historical precedent
-rather than by an explicit trade-off between how *informative* a site is (the
-vector dynamics it captures) and how *reachable* it is (the operational cost to
-monitor it). This creates two risks: hard-to-reach but epidemiologically
-important areas are under-sampled, while easy-to-reach but low-value sites
-absorb scarce resources.
+While this approach ensured national coverage, the ability of a single
+site to adequately represent large and environmentally diverse provinces
+remains uncertain. Effective sentinel surveillance depends on a network
+of sites that adequately represents geographic and environmental
+variation while remaining operationally accessible throughout the year.
+In Kasaï-Central Province, seasonal rainfall can affect road
+accessibility and travel times, potentially limiting routine
+surveillance activities. At the same time, the province's environmental
+diversity raises questions about how well a single sentinel site can
+represent conditions across all 26 health zones. Consequently, the
+current surveillance network may not adequately capture the full
+geographic and environmental diversity of the province, potentially
+leaving important surveillance gaps. Evaluating accessibility,
+environmental representativeness, and geographic coverage is therefore
+essential for identifying priority locations for entomological
+surveillance.
 
-DRC's health system is administratively nested — **province → health zone
-(*zone de santé*) → health area (*aire de santé*) → village** — which gives a
-natural hierarchy for both sampling design and decision-making. Health areas are
-each served by a health centre, and the number of areas within a zone scales
-roughly with population density.
+Recent efforts by the National Malaria Control Programme (NMCP) to
+strengthen the sentinel surveillance system have focused primarily on
+programmatic and operational indicators. While these indicators are
+important, they may not fully address the spatial and environmental
+dimensions of surveillance-site selection. In particular, seasonal
+accessibility, environmental representativeness and geographic coverage
+are not systematically considered. Consequently, the current
+surveillance network may not adequately capture the full range of
+geographic and environmental conditions across provinces such as
+Kasaï-Central, potentially resulting in surveillance coverage gaps.
 
-This project asks whether **quantifying geographic accessibility can improve the
-efficiency of malaria vector surveillance** in DRC, using the province of
-**Kasaï-Central** as a case study. Victoire collected an entomological
-dataset across this province as part of his PhD (26 health zones; sampling in one
-health area / village per zone; 25 households per village; 12 months of
-collection), which provides per-village species counts to anchor the analysis.
+Addressing this knowledge gap could provide valuable evidence for
+strengthening surveillance planning and guiding future sentinel site
+selection. Advances in geographic information systems (GIS), remote
+sensing, and travel-time modelling provide an opportunity to
+systematically evaluate accessibility, environmental representativeness,
+and surveillance coverage.
 
-::: {.callout-note}
-This proposal is a **new, standalone study** distinct from Victoire's PhD.
-It is intended to be developed with ECR mentors and partners toward a peer-reviewed publication, with NMCP as the primary end user.
-:::
+This project therefore proposes to evaluate the current sentinel
+surveillance network and identify priority locations for entomological
+surveillance in Kasaï-Central Province. The findings will support
+evidence-based sentinel site selection and contribute to strengthening
+malaria vector surveillance across the province.
 
 ## Study setting
 
-The study is set in the DRC, one of 26 provinces of which is **Kasaï-Central**,
-where Victoire's fieldwork was conducted (@fig-drc).
+This study will be conducted in the Kasaï-Central province, one of 10
+most malaria affected provinces (out of 26 provinces) in the Democratic
+Republic of the Congo (DRC) that collectively account for 64% of the
+national malaria burden (@fig-drc).
 
-![The DRC and its 26 provinces. Pink markers indicate the Victoire's PhD study province, Kasaï-Central.](images/fig1-drc-provinces.png){#fig-drc width=60%}
+![Location of Kasaï-Central Province (highlighted in teal) among the 26
+provinces of the Democratic Republic of
+Congo.](images/fig1-drc-provinces.png){#fig-drc width="60%"}
 
-Within Kasaï-Central the health system comprises **25 health zones**, roughly
-**442–466 health areas**, and about **4,856 villages** (@fig-zones). This nested
-structure is the spatial backbone for the accessibility and sampling analyses.
+The province covers approximately **60,000 km²** and is organised into
+**26 health zones**, **466 health areas**, and **4,856 villages** within
+the health system.(@fig-zones). Despite its large geographic extent and
+environmental heterogeneity, entomological surveillance currently relies
+on a single sentinel site located in Mikalayi health zone.
 
-![Health zones and their constituent health areas across Kasaï-Central (466 areas total). Source: GRID3 v8.0.](images/fig2-health-zones-areas.png){#fig-zones width=85%}
+![Health zones and their constituent health areas across Kasaï-Central
+(466 areas total). Source: GRID3
+v8.0.](images/fig2-health-zones-areas.png){#fig-zones width="85%"}
 
-@tbl-zones summarises the health areas and villages per health zone, based on
-the Victoire's compiled data.
+@tbl-zones summarises the number of health areas and villages within
+each health zone in Kasaï-Central Province.
 
-| Health zone     | # Health areas | # Villages |
-|-----------------|---------------:|-----------:|
-| Lubondaie       | 13  | 95   |
-| Lubunga         | 12  | 142  |
-| Bena Leka       | 25  | 267  |
-| Masuika         | 22  | 239  |
-| Tshikaji        | 14  | 185  |
-| Tshibala        | 24  | 306  |
-| Luambo          | 21  | 305  |
-| Kalomba         | 16  | 248  |
-| Bilomba         | 15  | 224  |
-| Bena Tshiadi    | 11  | 120  |
-| Bukonde         | 14  | 136  |
-| Demba           | 22  | 296  |
-| Katende         | 13  | 89   |
-| Tshikula        | 17  | 192  |
-| Ndesha          | 8   | 110  |
-| Muetshi         | 11  | 142  |
-| Mutoto          | 15  | 155  |
-| Ndekesha        | 18  | 194  |
-| Luiza           | 20  | 251  |
-| Mikalayi        | 26  | 349  |
-| Bobozo          | 9   | 40   |
-| Dibaya          | 17  | 169  |
-| Katoka          | 10  | 69   |
-| Lukonga         | 17  | 127  |
-| Kananga         | 23  | 173  |
-| Yangala         | 29  | 233  |
-| **Total**       | **442** | **4,856** |
+| Health zones | Health areas |  Villages |
+|--------------|-------------:|----------:|
+| Bena Leka    |           25 |       267 |
+| Bena Tshiadi |           11 |       120 |
+| Bilomba      |           15 |       224 |
+| Bobozo       |           17 |        40 |
+| Bukonde      |           14 |       136 |
+| Demba        |           26 |       296 |
+| Dibaya       |           17 |       169 |
+| Kalomba      |           17 |       248 |
+| Kananga      |           23 |       173 |
+| Katende      |           13 |        89 |
+| Katoka       |           10 |        69 |
+| Luambo       |           21 |       305 |
+| Lubondaie    |           20 |        95 |
+| Lubunga      |           12 |       142 |
+| Luiza        |           20 |       251 |
+| Lukonga      |           19 |       127 |
+| Masuika      |           23 |       239 |
+| Mikalayi     |           26 |       349 |
+| Muetshi      |           12 |       142 |
+| Mutoto       |           15 |       155 |
+| Ndekesha     |           18 |       194 |
+| Ndesha       |            9 |       110 |
+| Tshibala     |           24 |       306 |
+| Tshikaji     |           14 |       185 |
+| Tshikula     |           16 |       192 |
+| Yangala      |           29 |       233 |
+| **Total**    |      **466** | **4,856** |
 
-: Health areas and villages per health zone, Kasaï-Central. {#tbl-zones}
+: Health areas and villages per health zone, Kasaï-Central province.
 
 ## Aim and research questions
 
-**Overall aim:** to quantify geographic accessibility across Kasaï-Central and
-use it — together with vector density and human-settlement indicators — to
-optimise the selection and operation of entomological surveillance sites.
+To evaluate the current entomological sentinel surveillance network and
+identify an accessible and environmentally representative set of
+priority surveillance locations in Kasaï-Central Province under
+different seasonal conditions.
 
-The proposal consolidates several related ideas into one core question with
-optional extensions:
+## Research Questions
 
-**Primary research question**
+### Research Question 1
 
-> Can geographic accessibility improve the efficiency of malaria vector
-> surveillance site selection?
+How does seasonal variation affect travel-time accessibility to current
+and potential entomological sentinel surveillance locations in
+Kasaï-Central Province?
 
-**Secondary / extension questions**
+### Research Question 2
 
-1. **Network sizing.** How many surveillance sites are actually needed to
-   capture vector dynamics while minimising operational cost and travel time?
-2. **Settlement as a predictor.** Do building-footprint metrics improve
-   predictions of *Anopheles* occurrence and abundance beyond environmental
-   variables alone?
-3. **Transmission-opportunity mapping.** Does combining a mosquito-breeding
-   layer with a human-exposure layer produce more accurate maps of transmission
-   opportunity than either alone?
-4. **Training logistics.** How much travel time and operational cost can be
-   reduced through accessibility-based planning of program activities such as
-   field-team training?
+Which locations should be prioritised for future entomological
+surveillance when seasonal accessibility, environmental
+representativeness, and geographic coverage are considered together?
 
 ## Objectives
 
-1. Build **provincial travel-time surfaces** to candidate sentinel village sites
-   using open geospatial layers (roads, land cover, hydrology, terrain) and
-   established accessibility-modelling methods.
-2. Cross the accessibility surface with **per-village vector density** to derive
-   a **quadrant prioritisation framework** for site selection.
-3. Propose a **stratified sampling design** that identifies the most efficient
-   locations for longitudinal entomological data collection.
-4. (Extension) Evaluate **building footprints** as a predictor of vector
-   occurrence/abundance and as a human-exposure layer.
-5. (Extension) Develop an **accessibility-based training-logistics tool** that
-   tells each zone/area/village the nearest feasible training location.
+1.  To assess seasonal accessibility to current and potential
+    entomological surveillance locations by estimating travel times
+    under different seasonal conditions.
+2.  To evaluate the environmental representativeness and geographic
+    coverage of the current sentinel surveillance network.
+3.  To identify surveillance gaps by assessing the combined effects of
+    accessibility, environmental representativeness, and geographic
+    coverage.
+4.  To prioritise potential sentinel surveillance locations by
+    integrating seasonal accessibility, environmental
+    representativeness, and geographic coverage.
 
-## Conceptual framework: accessibility × vector density
+## Conceptual Framework
 
-The analytically richest output cross-references the travel-time surface with
-per-village species counts to place every candidate site into one of four
-quadrants (@tbl-quadrants). This turns two continuous surfaces into an
-actionable decision rule.
+Effective entomological surveillance requires sentinel sites that are
+both operationally accessible and representative of the geographic and
+environmental diversity of the areas under surveillance. To address this
+requirement, the proposed framework integrates three complementary
+dimensions of surveillance performance: seasonal accessibility,
+environmental representativeness, and geographic coverage.
 
-| Vector density | Travel time | Interpretation & action |
-|----------------|-------------|-------------------------|
-| High           | Low         | **Priority** — informative *and* efficient to monitor |
-| High           | High        | **High risk, hard to reach** — important but costly; candidate for targeted or rotating effort |
-| Low            | Low         | **Easy but low value** — monitor opportunistically |
-| Low            | High        | **Deprioritise** — low information per unit cost |
+Seasonal accessibility will be evaluated through travel-time modelling
+to determine the extent to which surveillance locations can be reached
+under different seasonal conditions. Environmental representativeness
+will be assessed to determine whether the current surveillance network
+adequately captures the environmental diversity of Kasaï-Central
+Province. Geographic coverage will be examined to identify areas that
+are poorly represented or insufficiently covered by the existing
+surveillance network.
 
-: Quadrant prioritisation of candidate surveillance sites. {#tbl-quadrants}
+The outputs from these analyses will be integrated to identify
+surveillance coverage gaps and prioritise potential sentinel
+surveillance locations. The resulting framework will support
+evidence-based decision-making for sentinel site selection and future
+network expansion in Kasaï-Central Province.
 
-## Data sources
+## Methodology
 
-- **Administrative & population boundaries and health facilities:** GRID3 DRC
-  geospatial data (provinces, health zones, health areas, villages, health
-  facilities) — see [grid3.org/geospatial-data-drc](https://grid3.org/geospatial-data-drc).
-- **Entomological data:** Victoire's province-wide dataset (per-village
-  *Anopheles* species counts; 26 health zones; 25 households/village; 12 months).
-- **Building footprints / settlement:** Google Open Buildings V2 (@fig-buildings).
-- **Environmental & accessibility covariates:** land cover, roads, hydrology,
-  topography, rainfall, and vegetation indices from open sources.
+### Study Design
 
-@fig-facilities shows the existing health-facility network — the practical
-service and access points that anchor travel-time origins and training venues.
+This study will use a spatial analytical approach to evaluate the
+current entomological sentinel surveillance network and identify
+priority surveillance locations in Kasaï-Central Province. The study
+will be conducted through four interconnected work packages (WPs).
 
-![Health facilities across Kasaï-Central by facility type. Source: GRID3 v8.0.](images/fig5-health-facilities.png){#fig-facilities width=85%}
+### Data source
 
-## Methods
+This study will integrate health-system, entomological, geographic,
+environmental, and climatic datasets to evaluate the current
+entomological sentinel surveillance network and identify priority
+locations for future sentinel surveillance in Kasaï-Central Province.
 
-### Accessibility (travel-time) modelling
+- **Health-system data**: Geographic coordinates of the existing
+  sentinel site in Mikalayi Health Zone, health-facility locations,
+  health-zone boundaries, health-area boundaries, and village locations
+  obtained from the GRID3 DRC geospatial database. These datasets will
+  be used to evaluate the current surveillance network, identify
+  potential sentinel locations, and support spatial analyses.
+- **Entomological data**: Open-access malaria vector occurrence records
+  obtained from the Vector Atlas. These data will be used to
+  characterise malaria vector distribution and support environmental
+  suitability and representativeness analyses.
+- **Road network data**: OpenStreetMap road network data used to
+  estimate travel times and assess seasonal accessibility to existing
+  and potential surveillance locations.
+- **Environmental covariates**: Environmental datasets including
+  elevation, surface water, rainfall, land cover, and vegetation indices
+  (e.g., NDVI,) obtained from publicly available remote-sensing
+  products. These variables will be used to characterize environmental
+  conditions across Kasaï-Central Province, assess environmental
+  representativeness, support environmental suitability analyses, and
+  contribute to seasonal accessibility modelling.
 
-Construct a friction surface from land cover, road class, slope, and hydrology,
-then compute least-cost travel time from population centres and health
-facilities to candidate sentinel sites (and vice versa). Produce **preliminary
-provincial maps of travel time** to candidate village sites for each health
-zone, enabling the NMCP to compare candidate sites on a like-for-like
-accessibility basis.
+## Working packages
 
-### Vector-density integration and prioritisation
+### WP1. Seasonal Accessibility Assessment
 
-Interpolate/aggregate the per-village species counts to the health-area level
-and overlay them on the travel-time surface to populate the quadrant framework
-(@tbl-quadrants). Identify and rank monitoring sites where **pre-intervention
-vector densities are predicted to be high** and accessibility is favourable.
+#### Rationale
+Accessibility is a key determinant of the operational feasibility of entomological surveillance. Seasonal rainfall can affect road conditions and travel times, potentially limiting access to surveillance locations during parts of the year.
 
-### Stratified sampling design
+### Methods
+Travel-time surfaces will be generated to quantify accessibility across Kasaï-Central Province under different seasonal conditions. These surfaces will be used to assess the accessibility of existing and potential sentinel surveillance locations and to identify areas where seasonal conditions may constrain surveillance activities.
 
-Use the combined accessibility and density surfaces to propose a stratified
-sampling scheme, and estimate the **minimum number of sites** required to
-capture provincial vector dynamics within acceptable precision — directly
-addressing the network-sizing question.
+### Main Outputs
 
-### Building footprints and vector distribution (extension)
+- **Seasonal accessibility maps** describing travel times to existing and potential surveillance locations across Kasaï-Central Province under different seasonal conditions.
 
-Because host availability drives biting opportunity, building-footprint density
-is a plausible proxy for human population and therefore for where host-seeking
-vectors concentrate (@fig-buildings). Test whether building-footprint metrics
-improve models of *Anopheles* occurrence/abundance beyond environmental
-covariates, and use them to flag health areas within each zone that the NMCP
-might prioritise for vector-control tools.
+### WP2. Environmental Representativeness Assessment
 
-![Number of building footprints per health area. Source: Google Open Buildings V2.](images/fig4-building-footprints.png){#fig-buildings width=85%}
+#### Rationale
+A sentinel surveillance network should adequately represent the environmental diversity of the province to ensure that entomological observations reflect the range of conditions influencing malaria vector distribution. Assessing environmental representativeness is therefore essential for determining whether the current surveillance network captures the environmental settings relevant to malaria vectors across Kasaï-Central Province.
 
-### Transmission-opportunity mapping (extension)
+### Methods
+Environmental suitability modelling will be used to characterise conditions associated with malaria vector occurrence across Kasaï-Central Province. Vector occurrence records obtained from the Vector Atlas will be combined with environmental covariates, including rainfall, land cover, vegetation indices, elevation, and surface water, to generate a province-wide environmental suitability surface. The resulting map will be used to assess how well the environmental conditions represented by the current sentinel site reflect the broader environmental diversity of the province.
 
-Combine a **mosquito-breeding layer** (water, hydrology, topography, rainfall,
-vegetation) with a **human-exposure layer** (building footprints, population,
-settlement density) to classify areas (@tbl-transmission).
+### Main Outputs
 
-| Breeding | Exposure | Classification |
-|----------|----------|----------------|
-| High     | High     | **Transmission hotspot** |
-| High     | Low      | **Mosquito hotspot** |
-| Low      | High     | **Human-concentration area** |
+- **Environmental suitability map** identifying areas with environmental conditions favourable for malaria vectors across Kasaï-Central Province.
 
-: Transmission-opportunity classification from breeding × exposure layers. {#tbl-transmission}
+### WP3. Surveillance Gap Analysis
 
-**Working hypothesis:** building footprints capture vector–host encounter
-opportunities while larval-habitat suitability captures mosquito production;
-combining both yields more accurate maps of malaria-transmission opportunity
-than either approach alone.
+#### Rationale
+Surveillance gaps may occur when areas of environmental importance are not represented within the current surveillance network or when seasonally inaccessible locations limit surveillance activities. Identifying these gaps is necessary for improving the representativeness and coverage of entomological surveillance across the province.
 
-### Training-logistics optimisation (extension)
+### Methods
+Outputs from the seasonal accessibility assessment (WP1) and environmental representativeness assessment (WP2) will be integrated to identify areas that are poorly represented by the current surveillance network. Particular attention will be given to locations that combine high environmental suitability with limited accessibility or lack of surveillance coverage.
 
-During PhD fieldwork, field teams were grouped into training **pools** by
-accessibility rather than by administrative tidiness — e.g. teams reached the
-Demba pool more easily from Kalomba and Ndekesha than from Bilomba, because of
-distance and road quality (@fig-pools). Formalising this, the travel-time model
-can assign each zone/area/village to its **nearest feasible training venue**,
-reducing travel time and cost for program activities such as entomological and
-epidemiological training.
+### Main Outputs
 
-![Sentinel villages grouped into five training pools by accessibility, Kasaï-Central. Pool membership reflects real travel feasibility rather than administrative adjacency.](images/fig3-sentinel-pools.png){#fig-pools width=85%}
+- **Surveillance coverage gap map** identifying priority areas that are currently underrepresented by the sentinel surveillance network.
 
-## Expected outputs
+### WP4. Sentinel Site Prioritisation
 
-- Provincial **travel-time surfaces** and per-zone accessibility maps.
-- A **quadrant prioritisation** of candidate sentinel sites.
-- A **stratified sampling design** with an estimate of the minimum viable number
-  of surveillance sites.
-- (Extension) Evidence on **building footprints** as a vector-occurrence
-  predictor and transmission-opportunity maps.
-- (Extension) An **accessibility-based training-logistics** planning tool.
-- One or more **peer-reviewed manuscripts** and NMCP-facing decision aids.
+#### Rationale
+Improving surveillance coverage requires the identification of locations that are both operationally accessible and environmentally representative. Integrating these considerations can support evidence-based selection of future sentinel sites.
 
-## Significance
+### Methods
+Accessibility, environmental representativeness, and surveillance coverage information generated in WP1–WP3 will be combined within a spatial prioritisation framework. Candidate locations will be evaluated according to their potential contribution to improving surveillance coverage while remaining operationally accessible across seasons.
 
-For the NMCP and funders, the outputs convert scattered field knowledge into
-explicit, defensible decisions: where to place sentinel sites, how many are
-enough, which health areas to prioritise for vector-control tools, and where to
-hold training to minimise cost. The approach is transferable to other DRC
-provinces and to comparable resource-limited settings.
+### Main Outputs
+
+- **Ranked list of priority surveillance locations** for future entomological surveillance in Kasaï-Central Province.
+
+
+### WP4. Sentinel Site Prioritisation
+
+#### Rationale
+Improving surveillance coverage requires the identification of locations that are both operationally accessible and environmentally representative. Integrating these considerations can support evidence-based selection of future sentinel sites.
+
+### Methods
+Accessibility, environmental representativeness, and surveillance coverage information generated in WP1–WP3 will be combined within a spatial prioritisation framework. Candidate locations will be evaluated according to their potential contribution to improving surveillance coverage while remaining operationally accessible across seasons.
+
+### Main Outputs
+
+- **Ranked list of priority surveillance locations** for future entomological surveillance in Kasaï-Central Province.
+
+## Expected Impact
+
+The project will provide evidence to support the selection of sentinel surveillance sites that are both operationally accessible across seasons and environmentally representative of conditions across Kasaï-Central Province.
+The findings are expected to:
+- Improve understanding of seasonal accessibility constraints affecting  entomological surveillance activities;
+- Identify geographic and environmental areas that are underrepresented  by the current surveillance network;
+- Support evidence-based prioritisation of future sentinel surveillance  locations; and
+- Strengthen malaria vector surveillance and vector-control planning in  Kasaï-Central Province.
+
 
 ## Next steps
 
-Immediate next steps are to (1) confirm scope and lead research question with
-mentors, (2) assemble the open geospatial layers and the entomological dataset,
-and (3) produce a first provincial travel-time surface for one health zone 
-as a proof of concept.
+Immediate next steps are to (1) confirm scope and lead research question
+with mentors, (2) Compile and harmonise the health-system, entomological, geographic, environmental, and climatic datasets required for the study,  and (3) develop an initial travel-time surface for a selected health zone, with support from Christine, as a proof of concept for the accessibility modelling framework.
 
 ## Key reference
 
-Weiss *et al.* and related accessibility work motivate the core method; the
-directly relevant methodological reference is *Quantifying geographic
-accessibility to improve efficiency of entomological monitoring*
-([bioRxiv 10.1101/779561v2](https://www.biorxiv.org/content/10.1101/779561v2.full)).
+Weiss *et al.* and related accessibility work motivate the core method;
+the directly relevant methodological reference is *Quantifying
+geographic accessibility to improve efficiency of entomological
+monitoring* ([bioRxiv
+10.1101/779561v2](https://www.biorxiv.org/content/10.1101/779561v2.full)).
