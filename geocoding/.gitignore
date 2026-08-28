@@ -1,0 +1,10 @@
+# Generated results and build artefacts
+output/
+cache/
+
+# Quarto render output
+pipeline/*_files/
+pipeline/*.html
+
+# LibreOffice lock files
+.~lock.*#

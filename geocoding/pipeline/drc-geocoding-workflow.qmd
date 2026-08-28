@@ -1,0 +1,722 @@
+---
+title: "Sentinel Site Geocoding Workflow for the Democratic Republic of the Congo"
+subtitle: "Province-Constrained Coordinate Extraction Using the Google Maps Geocoding API"
+author: "Kaiza Ilomo - Ifakara Health Institute - MoDD Africa Project"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    theme: cosmo
+    highlight-style: github
+  pdf:
+    toc: true
+    number-sections: true
+    colorlinks: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Executive Summary
+
+This document geocodes the **26 sentinel sites** of the DRC surveillance network — one per province — deriving latitude and longitude for each `sentinel_site` using its `province` as a constraint.
+
+It produces coordinates with full provenance for every site, a review queue of anything that could not be trusted outright, and an interactive map for visual verification.
+
+### Administrative Hierarchy
+
+| Level | Field | Description |
+|-------|-------|-------------|
+| Country | — | Democratic Republic of the Congo |
+| Admin 1 | `province` | Province (current 26-province configuration) |
+| Health Zone | `sentinel_site` | Zone de Santé hosting the sentinel site |
+| Identifier | `site_id` | Derived from the site name, e.g. `DRC-VANGA` |
+
+### Design principles
+
+1. **Constrain, then verify.** The province is pinned server-side with Google's `components=country:CD|administrative_area:<province>` filter rather than appended to a query string. That filter is advisory rather than binding, so the province is also **checked against the response** before a result is accepted.
+2. **Judge matches on the API's own quality signals.** Calling the REST endpoint directly exposes `partial_match`, `location_type`, `types` and the result count. These drive the quality gate, instead of inferring quality from whether a coordinate came back at all.
+3. **Refuse rather than downgrade.** A candidate in the wrong province, or whose name bears no resemblance to the site, is discarded and the ladder keeps walking. For spatial analysis a wrong coordinate is worse than a missing one.
+
+### Background
+
+Accurate geolocation of sentinel sites supports:
+
+- Spatial analysis of disease transmission patterns
+- Healthcare accessibility modelling
+- Intervention planning and optimisation
+- Care seeking and delivery modelling
+
+## System Requirements
+
+### R Package Installation
+
+```{r}
+#| label: package-installation
+#| eval: false
+
+# Core packages required
+packages <- c(
+  "tidyverse",     # Data manipulation
+  "httr",          # HTTP requests
+  "jsonlite",      # JSON parsing
+  "leaflet",       # Map visualization
+  "htmlwidgets",   # Save interactive widgets
+  "knitr"          # For this documentation
+)
+
+# Installation function
+install_if_missing <- function(packages) {
+  missing <- packages[!(packages %in% installed.packages()[,"Package"])]
+  if(length(missing) > 0) {
+    install.packages(missing, repos = "https://cloud.r-project.org/")
+  }
+}
+
+install_if_missing(packages)
+```
+
+Dependencies are managed with `renv` where a lockfile is available: if a
+`renv.lock` sits in the parent directory, run `renv::restore()` from there
+before rendering. Otherwise install the packages above directly with
+`install.packages()`. See `README.md` for the full setup.
+
+```{r}
+#| label: load-libraries
+#| eval: true
+
+library(tidyverse)
+library(httr)
+library(jsonlite)
+library(leaflet)
+library(htmlwidgets)
+library(knitr)
+
+source("config.R")
+source("geocode-functions.R")
+
+dir.create(paths$output, showWarnings = FALSE, recursive = TRUE)
+```
+
+### API Credentials
+
+The Google Maps Geocoding API requires a key with the **Geocoding API** enabled
+(<https://console.cloud.google.com/apis/credentials>). It is read from the
+`GOOGLE_MAPS_API_KEY` environment variable and is never printed or written to
+any output file.
+
+```{r}
+#| label: api-key-check
+#| eval: true
+
+google_api_key <- Sys.getenv("GOOGLE_MAPS_API_KEY")
+
+if (nchar(google_api_key) == 0) {
+  stop("GOOGLE_MAPS_API_KEY is not set. Export it before rendering this document.")
+}
+
+cat("Google Maps API key detected (", nchar(google_api_key), " characters).\n", sep = "")
+```
+
+## Province Validation
+
+The input uses the **current 26-province** configuration created by the 2015
+reorganisation, which is the structure reflected in Google's — and
+OpenStreetMap's — administrative data. Each province appears exactly once, with
+one sentinel site.
+
+This matters because the province is not merely appended to a query string: it
+is pinned as a `components` filter and then checked against the response. A
+pre-2015 name (Bandundu, Katanga, Orientale, Bas-Congo, Kasaï-Occidental) or a
+typo would silently weaken that constraint on every query for the affected
+site, so the input is validated against the canonical list before any request
+is made.
+
+Note that the input spells provinces inconsistently — `Kasaï` carries its
+diaeresis while `Bas-Uele` does not. Comparison runs through `normalise_name()`,
+which folds accents and punctuation, so no cleaning is required.
+
+```{r}
+#| label: province-list
+#| eval: true
+
+tibble(Province = drc_provinces) |>
+  mutate(n = row_number()) |>
+  select(n, Province) |>
+  kable(caption = "The 26 provinces the input is validated against")
+```
+
+## Geocoding Methodology
+
+### The Query Ladder
+
+Each site is resolved by walking an ordered ladder of query variants and
+stopping at the first candidate that passes the quality gate. The rung that
+succeeded is recorded, so it is visible afterwards how hard the geocoder had to
+work.
+
+| Rung | `address` | `components` |
+|------|-----------|--------------|
+| 1 | `Zone de Sante de {site}` | `country:CD\|administrative_area:{province}` |
+| 2 | `{site}` | `country:CD\|administrative_area:{province}` |
+| 3 | `{site}, {province}, Republique Democratique du Congo` | `country:CD` |
+| 4 | `{site}` | `country:CD` |
+
+Rungs 1 and 2 pin the province server-side. Rung 3 drops that constraint but
+keeps the province as a search term. Rung 4 is a last resort restricted only by
+country.
+
+Four requests per site at worst — around 100 in total, well inside the free
+monthly tier.
+
+```{r}
+#| label: query-ladder-example
+#| eval: true
+
+build_query_variants("Vanga", "Kwilu") |>
+  select(rung, address, components) |>
+  kable(caption = "The ladder for one site")
+```
+
+### The Quality Gate
+
+A candidate is **rejected outright** — discarded, with the ladder continuing —
+when any of the following hold:
+
+1. `location_type == "APPROXIMATE"` *and* its `types` include
+   `administrative_area_level_1`, `administrative_area_level_2` or `country`.
+   The geocoder returned a province or district centroid rather than the site.
+2. Its coordinates fall outside the DRC bounding box.
+3. **The returned `administrative_area_level_1` is not the province asked for.**
+4. **The returned name bears no resemblance to the site name** — similarity
+   below `r gate$similarity_floor`.
+
+Rules 3 and 4 exist because of a real failure. In testing against the live API,
+a query pinned to `administrative_area:Kasai` came back with
+*"Avenue TP numéro 3C, Quartier Funa, Kinshasa"* — a business roughly 700 km
+from Kasaï — and the gate accepted it. Two lessons followed:
+
+- Google's `administrative_area` component filter is **advisory, not binding**,
+  so the province must be verified in the response.
+- Name similarity separates good from bad cleanly: every correct match scored
+  **1.00**, while the two wrong ones scored **0.56** and **0.25**.
+
+Note what is deliberately *not* a rule: a blacklist on `establishment` or
+`point_of_interest` types. Both bad results carried them — but so would a
+legitimate match on "Centre de Santé de …", so the type alone proves nothing.
+
+Surviving candidates carry **soft flags** that set the confidence tier: more
+than one result returned, an unverifiable province, an imperfect name match, or
+a `partial_match` *combined with* a weak name. That last qualifier matters —
+`partial_match` fires on every rung-1 query simply because the result does not
+contain the literal `"Zone de Sante de "` prefix, and counting it unconditionally
+made `high` confidence unreachable for every site in the earlier run.
+
+| Tier | Meaning |
+|------|---------|
+| `high` | Resolved at rung 1–2 with no flags |
+| `medium` | Resolved at rung 1–3 with at most one flag |
+| `low` | Accepted, but with several doubts — review before use |
+| `manual` | Coordinates pinned by an analyst in `manual_overrides.csv` |
+| `failed` | No candidate survived the gate |
+
+Everything below `high` is written to a review file. A site that **fails** is
+working as intended: it means no candidate could be trusted, and the location
+should be pinned by hand rather than guessed.
+
+## Data Preparation
+
+```{r}
+#| label: data-preparation
+#| eval: true
+
+sites <- read.csv(paths$input, stringsAsFactors = FALSE) |>
+  ensure_site_id() |>
+  distinct(site_id, .keep_all = TRUE)
+
+cat("=====================================\n")
+cat("DRC SENTINEL SITE GEOCODING\n")
+cat("Geocoding Service: Google Maps Geocoding API\n")
+cat("=====================================\n\n")
+cat("Total sites to geocode:", nrow(sites), "\n")
+cat("Unique provinces (adm1):", length(unique(sites$province)), "\n\n")
+
+# Reject pre-2015 province names and typos before spending any requests: either
+# would silently weaken the province constraint on every query for that site.
+validate_provinces(sites)
+cat("All", length(unique(sites$province)),
+    "provinces are current 26-province names.\n")
+
+sites |>
+  select(site_id, province, sentinel_site) |>
+  head(5) |>
+  kable(caption = "First five sites, with derived identifiers")
+```
+
+```{r}
+#| label: cache-init
+#| eval: true
+
+n_cached <- cache_load()
+cat("Cached responses available:", n_cached, "\n")
+```
+
+## Main Processing Loop
+
+```{r}
+#| label: processing-loop
+#| eval: true
+
+results <- list()
+audits  <- list()
+start_time <- Sys.time()
+
+cat("\nStarting geocoding process with the Google Maps Geocoding API...\n")
+cat("================================================================\n\n")
+
+for (i in seq_len(nrow(sites))) {
+
+  site_row <- sites[i, ]
+
+  out <- geocode_site(
+    site_id  = site_row$site_id,
+    site     = site_row$sentinel_site,
+    province = site_row$province
+  )
+
+  results[[i]] <- out$result
+  audits[[i]]  <- out$audit
+
+  elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
+  cat(sprintf("[%2d/%2d] %-12s %-18s -> %-7s (rung %s) | %.2f min elapsed\n",
+              i, nrow(sites),
+              site_row$sentinel_site,
+              site_row$province,
+              out$result$confidence,
+              ifelse(is.na(out$result$resolved_at_rung), "-", out$result$resolved_at_rung),
+              elapsed))
+}
+
+geocoded  <- bind_rows(results)
+candidates <- bind_rows(audits)
+
+cache_save()
+
+total_time <- difftime(Sys.time(), start_time, units = "mins")
+
+cat("\nGeocoding complete.\n")
+cat("Total time:", round(total_time, 2), "minutes\n")
+cat("API calls made:", .geocode_cache$calls, "| served from cache:", .geocode_cache$hits, "\n\n")
+```
+
+## Manual Overrides
+
+Sites the geocoder gets wrong are corrected by adding a row to
+`../input/manual_overrides.csv` (`site_id, latitude, longitude, note`) and
+re-rendering. Overrides take precedence over any API result and are stamped
+`geocode_status = "manual"`.
+
+```{r}
+#| label: manual-overrides
+#| eval: true
+
+n_before <- sum(geocoded$geocode_status == "manual")
+geocoded <- apply_manual_overrides(geocoded)
+n_after  <- sum(geocoded$geocode_status == "manual")
+
+cat("Manual overrides applied:", n_after - n_before, "\n")
+```
+
+## Data Export
+
+```{r}
+#| label: data-export
+#| eval: true
+
+# Preserve every input column, then attach coordinates and provenance
+final <- sites |>
+  left_join(geocoded, by = "site_id") |>
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude)
+  )
+
+write.csv(final, file.path(paths$output, "drc_sentinel_sites_geocoded.csv"),
+          row.names = FALSE)
+cat("Main results saved to: output/drc_sentinel_sites_geocoded.csv\n")
+
+# Full audit trail: every candidate seen at every rung, accepted or not
+write.csv(candidates, file.path(paths$output, "drc_geocoding_candidates.csv"),
+          row.names = FALSE)
+cat("Candidate audit trail saved to: output/drc_geocoding_candidates.csv\n")
+
+# Anything short of a clean high-confidence match
+review <- final |> filter(!confidence %in% c("high", "manual"))
+write.csv(review, file.path(paths$output, "drc_geocoding_review.csv"),
+          row.names = FALSE)
+cat("Review queue (", nrow(review), " sites) saved to: output/drc_geocoding_review.csv\n", sep = "")
+
+failed <- final |> filter(is.na(latitude) | is.na(longitude))
+write.csv(failed, file.path(paths$output, "drc_geocoding_failed.csv"),
+          row.names = FALSE)
+cat("Failed cases (", nrow(failed), " sites) saved to: output/drc_geocoding_failed.csv\n", sep = "")
+```
+
+## Results Analysis
+
+### Success Metrics
+
+```{r}
+#| label: success-metrics
+#| eval: true
+
+summary_stats <- final |>
+  summarise(
+    total_sites  = n(),
+    geocoded     = sum(!is.na(latitude)),
+    failed       = sum(is.na(latitude)),
+    success_rate = sprintf("%.1f%%", 100 * sum(!is.na(latitude)) / n())
+  )
+
+cat("\n=====================================\n")
+cat("RESULTS SUMMARY\n")
+cat("=====================================\n\n")
+cat("Total sites:", summary_stats$total_sites, "\n")
+cat("Successfully geocoded:", summary_stats$geocoded, "\n")
+cat("Failed:", summary_stats$failed, "\n")
+cat("Success rate:", summary_stats$success_rate, "\n\n")
+
+final |>
+  count(confidence, name = "sites") |>
+  arrange(match(confidence, c("high", "medium", "low", "manual", "failed"))) |>
+  kable(caption = "Confidence tiers")
+```
+
+### Which Rung Resolved Each Site
+
+Most sites should resolve at rung 1 or 2, where the province is pinned. Heavy
+reliance on rungs 3–4 means the province-constrained queries are not finding
+these health zones and the site names may need correcting in `site_name_fixes`.
+
+```{r}
+#| label: rung-analysis
+#| eval: true
+
+final |>
+  select(sentinel_site, province, matched_admin1, resolved_at_rung,
+         confidence, location_type) |>
+  arrange(resolved_at_rung, sentinel_site) |>
+  kable(caption = "Resolution rung by site")
+
+final |>
+  count(resolved_at_rung, name = "sites") |>
+  kable(caption = "Sites resolved per rung")
+```
+
+### Provincial Breakdown
+
+```{r}
+#| label: provincial-analysis
+#| eval: true
+
+by_province <- final |>
+  group_by(province) |>
+  summarise(
+    total        = n(),
+    geocoded     = sum(!is.na(latitude)),
+    success_rate = sprintf("%.1f%%", 100 * sum(!is.na(latitude)) / n()),
+    .groups = "drop"
+  ) |>
+  arrange(desc(total), province)
+
+# With one sentinel site per province this collapses to a column of 1s, so it
+# is only worth printing once a province carries more than one site.
+if (max(by_province$total) > 1) {
+  kable(by_province, caption = "Success rate by province")
+} else {
+  cat("One sentinel site per province, so a provincial breakdown adds nothing\n")
+  cat("beyond the confidence and rung tables above.\n")
+}
+```
+
+## Data Quality Checks
+
+### Coordinate Bounds
+
+```{r}
+#| label: coordinate-validation
+#| eval: true
+
+bb <- country_profile$bbox
+
+out_of_bounds <- final |>
+  filter(!is.na(latitude)) |>
+  filter(latitude  < bb$lat_min | latitude  > bb$lat_max |
+         longitude < bb$lon_min | longitude > bb$lon_max)
+
+cat("Coordinate validation (DRC bounds: lat ", bb$lat_min, " to ", bb$lat_max,
+    ", lon ", bb$lon_min, " to ", bb$lon_max, ")\n", sep = "")
+cat("Sites within bounds:", sum(!is.na(final$latitude)) - nrow(out_of_bounds), "\n")
+cat("Sites outside bounds:", nrow(out_of_bounds), "\n")
+
+if (nrow(out_of_bounds) > 0) {
+  write.csv(out_of_bounds, file.path(paths$output, "drc_out_of_bounds.csv"),
+            row.names = FALSE)
+  cat("Out-of-bounds sites saved to: output/drc_out_of_bounds.csv\n")
+}
+```
+
+### Duplicate Coordinates
+
+Two sites sharing a coordinate almost always means a fallback to a shared
+administrative centroid slipped past the quality gate.
+
+```{r}
+#| label: duplicate-coordinates
+#| eval: true
+
+dupes <- final |>
+  filter(!is.na(latitude), !is.na(longitude)) |>
+  count(latitude, longitude, name = "n_sites") |>
+  filter(n_sites > 1)
+
+if (nrow(dupes) == 0) {
+  cat("No duplicate coordinates. Every site resolved to a distinct point.\n")
+} else {
+  cat("WARNING:", nrow(dupes), "coordinate pair(s) shared by more than one site.\n")
+  final |>
+    semi_join(dupes, by = c("latitude", "longitude")) |>
+    select(sentinel_site, province, latitude, longitude, matched_address) |>
+    arrange(latitude, longitude) |>
+    kable()
+}
+```
+
+### Province Agreement
+
+Confirms the gate held. A province mismatch is now a hard rejection, so every
+geocoded site must report the province it was asked for — any `FALSE` below
+would mean rule 3 of the quality gate is not firing.
+
+```{r}
+#| label: province-agreement
+#| eval: true
+
+agreement <- final |>
+  filter(!is.na(latitude), geocode_status != "manual") |>
+  mutate(agrees = normalise_name(matched_admin1) == normalise_name(province)) |>
+  select(sentinel_site, province, matched_admin1, agrees)
+
+n_bad <- sum(!agreement$agrees, na.rm = TRUE)
+
+if (n_bad == 0) {
+  cat("All", nrow(agreement),
+      "geocoded sites returned the province they were constrained to.\n\n")
+} else {
+  cat("WARNING:", n_bad, "site(s) returned a different province than requested.\n")
+  cat("The quality gate should have rejected these -- investigate.\n\n")
+}
+
+agreement |>
+  arrange(agrees, sentinel_site) |>
+  kable(caption = "Requested vs returned province")
+```
+
+### Spot Check
+
+With 26 sites, every point can and should be verified by eye. Each row links to
+the exact coordinate on Google Maps and OpenStreetMap. Pay closest attention to
+the urban health zones — Kabondo (a commune of Kisangani), Dibindi (Mbuji-Mayi)
+and Kingasani (Kinshasa) — which are not standalone settlements and are the most
+likely to resolve to something plausible but wrong.
+
+```{r}
+#| label: spot-check
+#| eval: true
+
+final |>
+  filter(!is.na(latitude)) |>
+  transmute(
+    Site       = sentinel_site,
+    Province   = province,
+    Matched    = matched_address,
+    Confidence = confidence,
+    Coordinates = sprintf("%.4f, %.4f", latitude, longitude),
+    Verify = sprintf(
+      "[Google](https://www.google.com/maps/search/?api=1&query=%f,%f) / [OSM](https://www.openstreetmap.org/?mlat=%f&mlon=%f#map=12/%f/%f)",
+      latitude, longitude, latitude, longitude, latitude, longitude
+    )
+  ) |>
+  kable()
+```
+
+## Visualization
+
+```{r}
+#| label: map-creation
+#| eval: true
+
+mapped <- final |> filter(!is.na(latitude), !is.na(longitude))
+
+if (nrow(mapped) > 0) {
+
+  pal <- colorFactor(palette = "viridis", domain = mapped$province)
+
+  map <- leaflet(mapped) |>
+    addTiles() |>
+    addCircleMarkers(
+      ~longitude, ~latitude,
+      group = ~confidence,
+      popup = ~paste0(
+        "<b>", sentinel_site, "</b><br>",
+        "<b>Site ID:</b> ", site_id, "<br>",
+        "<b>Province (input):</b> ", province, "<br>",
+        "<b>Province (returned):</b> ", matched_admin1, "<br>",
+        "<b>Matched address:</b> ", matched_address, "<br>",
+        "<b>Confidence:</b> ", confidence, " (rung ", resolved_at_rung, ")<br>",
+        "<b>Location type:</b> ", location_type, "<br>",
+        "<b>Coordinates:</b> ", round(latitude, 4), ", ", round(longitude, 4)
+      ),
+      label = ~sentinel_site,
+      labelOptions = labelOptions(noHide = TRUE, direction = "top",
+                                  textOnly = TRUE,
+                                  style = list("font-weight" = "bold")),
+      color = ~pal(province),
+      radius = 7,
+      fillOpacity = 0.8
+    ) |>
+    addLegend(
+      "bottomright",
+      pal = pal,
+      values = ~province,
+      title = "Province",
+      opacity = 1
+    ) |>
+    addLayersControl(
+      overlayGroups = unique(mapped$confidence),
+      options = layersControlOptions(collapsed = FALSE)
+    )
+
+  # Build in a temp directory: saveWidget() leaves a scratch "*_files" folder
+  # beside its target even when the result is fully self-contained.
+  staged <- file.path(tempdir(), "drc_sentinel_sites_map.html")
+  saveWidget(map, staged, selfcontained = TRUE)
+  file.copy(staged, file.path(paths$output, "drc_sentinel_sites_map.html"),
+            overwrite = TRUE)
+  cat("Interactive map saved to: output/drc_sentinel_sites_map.html\n")
+
+  map
+} else {
+  cat("No sites were successfully geocoded. Map cannot be created.\n")
+}
+```
+
+## Troubleshooting
+
+### Issue 1: `REQUEST_DENIED` from the API
+
+**Cause**: The key is missing, restricted, or the Geocoding API is not enabled
+on the Google Cloud project.
+
+**Solution**: Enable "Geocoding API" at
+<https://console.cloud.google.com/apis/library>, and check that any HTTP
+referrer or IP restrictions on the key permit server-side use.
+
+### Issue 2: A site is rejected for the wrong province
+
+**Cause**: Google returned a result whose `administrative_area_level_1` differs
+from the province the query was pinned to. The `components` filter is advisory,
+so this happens when the site name matches something better-known elsewhere in
+the country — typically a business or street in Kinshasa.
+
+**Solution**: The rejection is correct; a point in the wrong province is
+worthless. Check `drc_geocoding_candidates.csv` to see what was offered. If the
+site simply is not in Google's data, pin it in `manual_overrides.csv`.
+
+### Issue 3: A site resolves only at rung 3 or 4
+
+**Cause**: The province-constrained rungs returned `ZERO_RESULTS`, or everything
+they offered was rejected.
+
+**Solution**: Check the audit trail for what each rung returned. The site name
+is most likely spelled differently in Google's data — add a correction to
+`site_name_fixes` in `config.R` and re-run.
+
+### Issue 4: A site is rejected as an administrative-area centroid
+
+**Cause**: The health zone is not a named settlement in Google's data, so the
+geocoder fell back to the enclosing province or territory.
+
+**Solution**: This rejection is intentional — a province centroid is worse than
+no coordinate. Pin the true location in `manual_overrides.csv`.
+
+### Issue 5: Coordinates outside the DRC
+
+**Cause**: Should be impossible given `components=country:CD`. If it occurs, the
+`components` parameter is not reaching the API.
+
+**Solution**: Inspect the `components` column in the candidate audit trail.
+
+### Issue 6: The document re-renders without contacting the API
+
+**Cause**: This is the response cache working as intended.
+
+**Solution**: Delete `../cache/google_geocode_cache.rds` to force fresh lookups.
+
+## Output Files
+
+| File | Description | Format |
+|------|-------------|--------|
+| `drc_sentinel_sites_geocoded.csv` | Input columns plus coordinates and full provenance | CSV |
+| `drc_geocoding_candidates.csv` | Every candidate at every rung, accepted or rejected | CSV |
+| `drc_geocoding_review.csv` | Anything below `high` confidence | CSV |
+| `drc_geocoding_failed.csv` | Sites with no acceptable candidate | CSV |
+| `drc_out_of_bounds.csv` | Coordinates outside the DRC (only if any occur) | CSV |
+| `drc_sentinel_sites_map.html` | Interactive map | HTML |
+
+## Appendices
+
+### Appendix A: API Documentation
+
+- <a href="https://developers.google.com/maps/documentation/geocoding/overview" target="_blank" rel="noopener noreferrer">**Google Maps Geocoding API**</a>
+- <a href="https://developers.google.com/maps/documentation/geocoding/requests-geocoding#component-filtering" target="_blank" rel="noopener noreferrer">**Component filtering**</a> — the `country` and `administrative_area` restrictions this pipeline relies on
+
+### Appendix B: DRC Geographic Context
+
+**Administrative structure:**
+
+- 26 provinces since 2015, reorganised from the previous 11
+- Provinces are divided into territories, and health services into *zones de santé*
+- French is the official language
+- Geographic bounds: latitude 13.5°S–5.4°N, longitude 12.0°E–31.4°E
+
+### Appendix C: Caching and Terms of Use
+
+Responses are cached in `../cache/google_geocode_cache.rds` so that
+re-rendering costs no API calls and yields identical coordinates. Google Maps
+Platform terms permit only limited temporary caching of geocoding results
+(place IDs excepted), so this should be treated as a short-lived local
+convenience for iteration rather than a permanent store.
+
+## Contact and Support
+
+- **Author**: Kaiza Ilomo
+- **Project**: MoDD Africa
+- **Institution**: Ifakara Health Institute
+- **Email**: <a href="mailto:kilomo@ihi.or.tz" target="_blank" rel="noopener noreferrer">kilomo@ihi.or.tz</a>
+
+------------------------------------------------------------------------
+
+*This document was created using Quarto. To reproduce this analysis, run:*
+
+```{bash}
+#| eval: false
+export GOOGLE_MAPS_API_KEY="your-key-here"
+quarto render drc-geocoding-workflow.qmd --to html
+```

@@ -1,0 +1,124 @@
+# DRC Sentinel Site Geocoding
+
+Derives latitude and longitude for the **26 sentinel sites** of the DRC
+surveillance network — one per province — from each site's name and province,
+using the Google Maps Geocoding API.
+
+The full method, quality rules and troubleshooting live in
+[`pipeline/drc-geocoding-workflow.qmd`](pipeline/drc-geocoding-workflow.qmd).
+This file is just enough to get you running.
+
+## Layout
+
+```
+input/     drc_sentinel_sites_26.csv   the 26 sites (province, sentinel_site)
+           manual_overrides.csv        analyst-pinned coordinates
+pipeline/  config.R                    country profile, province list, thresholds
+           geocode-functions.R         geocoder, quality gate, cache, overrides
+           drc-geocoding-workflow.qmd  the workflow document -- run this
+           test-geocode-functions.R    test suite
+output/    generated results (git-ignored)
+cache/     cached API responses (git-ignored)
+```
+
+## Setup
+
+R 4.0 or newer, plus Quarto. Required packages:
+
+```
+tidyverse  httr  jsonlite  leaflet  htmlwidgets  knitr
+```
+
+Dependencies are pinned with `renv` **in the parent directory**, not here. So:
+
+- If `../renv.lock` exists, run `renv::restore()` from that parent directory.
+- If this folder was copied out on its own, there is no lockfile — install the
+  packages directly:
+  ```r
+  install.packages(c("tidyverse", "httr", "jsonlite",
+                     "leaflet", "htmlwidgets", "knitr"))
+  ```
+
+This is the only thing outside `drc/` that the pipeline depends on.
+
+## API key
+
+You need a Google Cloud key with the **Geocoding API** enabled
+(<https://console.cloud.google.com/apis/library>). The pipeline reads it from
+the environment and never prints or writes it:
+
+```bash
+export GOOGLE_MAPS_API_KEY="your-key-here"
+```
+
+A `REQUEST_DENIED` error almost always means the Geocoding API is not enabled on
+the project, or the key has referrer restrictions that block server-side use.
+
+Roughly 100 requests per full run — comfortably inside the free monthly tier.
+
+## Running
+
+```bash
+quarto render pipeline/drc-geocoding-workflow.qmd --to html
+```
+
+Responses are cached in `cache/`, so re-rendering costs no API calls and yields
+identical coordinates. Delete the cache file to force fresh lookups.
+
+## Tests
+
+```bash
+Rscript pipeline/test-geocode-functions.R
+```
+
+64 assertions, no API key and no network needed. Every Google response used is a
+verbatim fixture recorded from the live API, so the quality gate is exercised
+against what the API actually returns. Run these after any change to
+`config.R` or `geocode-functions.R`.
+
+## Outputs
+
+| File | What it holds |
+|---|---|
+| `drc_sentinel_sites_geocoded.csv` | Main results: input columns plus coordinates and provenance |
+| `drc_geocoding_candidates.csv` | Every candidate considered at every rung, accepted or rejected |
+| `drc_geocoding_review.csv` | Anything below `high` confidence — look at these |
+| `drc_geocoding_failed.csv` | Sites where no candidate could be trusted |
+| `drc_sentinel_sites_map.html` | Interactive map |
+
+## Correcting a bad result
+
+Add a row to `input/manual_overrides.csv` and re-render:
+
+```csv
+site_id,latitude,longitude,note
+DRC-MIKALAYI,-6.0500,22.3167,pinned from field GPS
+```
+
+Overrides take precedence over anything the API returned and are marked
+`geocode_status = "manual"`. `site_id` is derived from the site name
+(`DRC-VANGA`, `DRC-MWENE-DITU`), so overrides survive the input being re-sorted.
+
+## Judge the run by confidence, not success rate
+
+This is the one thing worth internalising before changing anything.
+
+The pipeline **rejects** a candidate outright when it sits in the wrong province,
+or when the returned name bears no resemblance to the site. A site that ends up
+in `drc_geocoding_failed.csv` is not a bug — it means nothing trustworthy was
+found, and the honest answer is no coordinate.
+
+An earlier version treated these as warnings rather than rejections. It reported
+100% success while placing one health zone on a business in Kinshasa, roughly
+700 km from where it belongs. For spatial analysis a wrong coordinate is worse
+than a missing one, because nothing downstream will ever flag it.
+
+So if the success rate looks low, the fix is to pin the location in
+`manual_overrides.csv` — not to lower the thresholds in `config.R`.
+
+## Contact
+
+- **Author**: Kaiza Ilomo
+- **Project**: MoDD Africa
+- **Institution**: Ifakara Health Institute
+- **Email**: kilomo@ihi.or.tz
