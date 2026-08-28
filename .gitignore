@@ -1,0 +1,15 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+data/
+*.csv
+*.xls
+*.xlsx
+/output
+*.tif
+*.DS_Store
+*.pdf
+*.ppt
+*.pptx
+.positai

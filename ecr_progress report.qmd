@@ -1,0 +1,100 @@
+---
+title: "Mapping the Geographic Accessibility of Sentinel Sites for Entomological Surveillance Across the Democratic Republic of the Congo"
+subtitle: "Progress report"
+author:
+  - name: "Kaiza Ilomo"
+    affiliation: "Ifakara Health Institute"
+    email: kilomo@ihi.or.tz
+  - name: "Arsene Bokulu"
+    affiliation: "Institut National de Recherche Biomédicale (INRB)"
+    email: arsenebokulu01@gmail.com
+  - name: "Victoire Nsabatien"
+    affiliation: "The Kids Research Institute Australia"
+    email: Victoire.Nsabatien@thekids.org.au
+date: "2026-08-24"
+format: html
+---
+
+# Introduction
+
+Malaria remains a major public health challenge in the Democratic Republic of the Congo (DRC), accounting for a substantial proportion of the global malaria burden (Adam et al., 2026; Sugg et al., 2026).
+
+Malaria surveillance in the DRC operates through complementary routine and sentinel surveillance systems. Routine surveillance data are reported through the Système National d'Information Sanitaire (SNIS/DHIS2), while sentinel surveillance provides more detailed information from selected locations, including indicators relevant to malaria epidemiology, treatment efficacy and vector surveillance (Adam et al., 2026).
+
+Entomological surveillance is a critical component of malaria control programmes because it provides information on vector distribution, abundance, behaviour, and insecticide resistance to support evidence-based decision-making for vector control interventions (Kouassi et al., 2023). The usefulness of such surveillance depends partly on the spatial distribution and representativeness of sampling locations, particularly in environmentally heterogeneous settings where mosquito populations vary across space and time (Sedda et al., 2019; Sedda et al., 2026). Sedda et al. (2019) demonstrated that ecological stratification and model-based sampling can improve the efficiency of mosquito-surveillance designs, while the more recent Entomological Adaptive Surveillance Framework showed the value of evidence-based, adaptive site selection under spatial and temporal heterogeneity.
+
+In DRC, the sentinel surveillance network was established in 2003 with 11 sites supported initially by USAID/BASICS and subsequently by the Global Fund. Following the administrative reorganization of the country into 26 provinces, the network was reconfigured to 26 sites in November 2014. In 2023, a further expansion to 52 sites, corresponding to two sentinel sites per province, was approved.
+
+A sentinel site does not encompass an entire health zone but consists of a defined surveillance area within a selected health zone. Each site comprises the reference general hospital and three health areas located outside the hospital's catchment area, including two represented by public health centres and one by a private health facility, under the coordination of the health-zone management team. Thus, a network of 26 sentinel sites represents only a small proportion of the country's health zones, raising questions about the geographic coverage and operational accessibility of the surveillance system.
+
+Importantly, the performance of a surveillance network depends not only on spatial or ecological representativeness but also on the feasibility of repeatedly accessing surveillance locations. Entomological surveillance requires regular field visits for mosquito collection, supervision, transport of samples and other logistical activities. Poorly accessible sites may therefore increase travel time and operational costs and constrain the frequency and sustainability of surveillance. Longbottom et al. (2020) demonstrated that integrating geographic accessibility with entomological surveillance objectives can identify monitoring locations that provide useful information while reducing travel costs.
+
+These considerations are particularly relevant in the DRC, a geographically extensive and conflict-affected country that hosts large numbers of internally displaced populations, as well as refugees and returnees from neighbouring countries affected by regional insecurity. The country is characterized by substantial ecological heterogeneity, large travel distances, uneven transport infrastructure, seasonal variations, and persistent insecurity in some regions. Together, these factors can increase the logistical burden of routine entomological surveillance, hinder access to surveillance sites, and affect the timeliness, frequency, and sustainability of entomological data collection efforts.
+
+To strengthen malaria vector monitoring, the National Malaria Control Programme (NMCP) has progressively expanded its sentinel-site network from 11 sites to 26 sites, with plans for further expansion to 52 sites. While this expansion is intended to improve surveillance coverage and representativeness, its impact on geographic accessibility has not been systematically assessed. In particular, it remains unclear if the additional sites reduce travel distances and travel times between Provincial Health Divisions and sentinel sites, thereby improving the operational efficiency of the surveillance network.
+
+This study evaluates the extent to which the expansion of sentinel sites has improved geographic coverage and accessibility for entomological surveillance across the Democratic Republic of the Congo.
+
+# Statement of the problem
+
+The DRC has progressively expanded its malaria sentinel-surveillance network from 11 to 26 sites, with a further expansion to 52 sites proposed. However, increasing the number of surveillance sites does not necessarily guarantee improved operational accessibility. In a country characterized by vast geographic distances, uneven transport infrastructure and seasonal accessibility constraints, the location of sentinel sites may substantially influence the time and resources required to conduct routine entomological surveillance.
+
+Although previous studies have demonstrated the importance of spatially representative sampling and geographic accessibility for efficient entomological monitoring (Sedda et al., 2019; Longbottom et al., 2020; Sedda et al., 2026), the effect of successive sentinel-network expansions on geographic accessibility in the DRC has not been systematically quantified. This study addresses this gap by comparing geographic coverage, distance and travel time under the historical 11-site, current 26-site and proposed 52-site surveillance networks.
+
+# Research question
+
+To what extent do successive expansions of the malaria sentinel-site network improve geographic coverage and accessibility for entomological surveillance across the Democratic Republic of the Congo?
+
+# Objectives
+
+**Objective 1.** Characterize and compare the spatial distribution and geographic coverage of the 11-site, 26-site and proposed 52-site surveillance networks.
+
+**Objective 2.** Estimate and compare motorized and walking travel times between the capital city, Provincial Health Divisions and sentinel sites under each network configuration.
+
+**Objective 3.** Quantify and compare travel distances between the capital city, Provincial Health Divisions and sentinel sites under each network configuration.
+
+# Approach
+
+The study is being conducted in the Democratic Republic of the Congo (DRC), covering all 26 provinces. The analysis evaluates geographic accessibility under three sentinel-site network configurations: the historical 11-site network, the current 26-site network, and the proposed 52-site network.
+
+Data on the historical development and planned expansion of the malaria sentinel surveillance network were compiled by Victoire Nsabatien from unpublished National Malaria Control Programme (NMCP) documents. Historical and current Provincial Health Division names were compiled and standardized by Arsène Bokulu. These records were used to identify Provincial Health Division sites included in the historical 11 provinces and the current 26 provinces.
+
+Geographic coordinates for sentinel sites were obtained through the geocoding workflow developed by Kaiza Ilomo. The workflow uses the Google Maps Geocoding API to identify sentinel-site locations while constraining searches by province and applying a series of quality-control procedures to minimize incorrect geographic matches. The workflow records the source and confidence level of each geocoded location and flags uncertain locations for manual review.
+
+At the time of reporting, 25 of the 26 sites in the current surveillance network have been assigned coordinates, with most classified as high-confidence matches. The remaining unresolved or lower-confidence location (Mikalayi, Kasaï-Central Province) is currently under review by the ECR team. In parallel, efforts are underway to obtain administrative boundary shapefiles corresponding to the former 11-province configuration of the DRC to support historical analyses of the surveillance network.
+
+The accessibility analysis will integrate the spatial datasets listed in @tbl-datasets. Christine Myalla will support the team in the development and implementation of the accessibility and travel-time modelling workflows.
+
+| Dataset | Source | Purpose |
+|--------------------|-------------------------|--------------------------|
+| Sentinel-site network information | Unpublished NMCP programme documents compiled by Victoire Nsabatien | Identification of sites included in the historical 11-site, current 26-site, and proposed 52-site surveillance networks |
+| Provincial Health Division locations | Historical and current Provincial Health Division records compiled and provided by Arsène Bokulu | Definition of origin locations for accessibility analyses |
+| Sentinel-site coordinates | Geocoding workflow developed by Kaiza Ilomo using the Google Maps Geocoding API | Spatial localization and validation of sentinel-site locations |
+| Administrative boundaries | GRID3 DRC Health Zones and Health Areas datasets ([grid3.org](https://grid3.org)) | Delineation of national and subnational health administrative boundaries |
+| Road and transport-network data | GRID3 DRC Roads dataset ([grid3.org](https://grid3.org)) | Characterization of transport connectivity for accessibility analysis |
+| Travel-time / friction surfaces | GRID3 DRC Travel Time Friction Surface v1.0 ([grid3.org](https://grid3.org)) | Estimation of motorized and walking travel times |
+| Health facilities and settlements | GRID3 DRC Health Facilities and Settlement datasets ([grid3.org](https://grid3.org)) | Spatial validation and contextual mapping |
+
+: Spatial datasets used in the accessibility analysis. {#tbl-datasets}
+
+# Results (progress to date)
+
+The project is currently in the data preparation and accessibility-analysis phase. Sentinel-site coordinates for the 11-site, 26-site, and proposed 52-site networks have been compiled and preliminary distribution maps have been produced. Provincial Health Division locations have been assembled and are undergoing validation. Workflows for distance and travel-time analyses have been developed and are currently being implemented. Accessibility analyses comparing the three network configurations are ongoing.
+
+# References {.unnumbered}
+
+::: {#refs}
+Adam, J., Mukuku, O., Tawi, J.M., Luoga, P. and Mutombo, A.M. (2026). Prevalence and factors associated with malaria among children aged 6–59 months in the Democratic Republic of the Congo: a nationwide cross-sectional survey. *Malaria Journal*, 25(1), 117. <https://doi.org/10.1186/s12936-026-05822-2>
+
+GRID3 (2026). *Geospatial data: Democratic Republic of the Congo.* Geo-Referenced Infrastructure and Demographic Data for Development (GRID3). Use the specific dataset name and version in the Methods section (e.g., DRC Roads, Health Zones, Health Facilities, or Travel Time Friction Surface).
+
+Kouassi, B.L., Edi, C., Ouattara, A.F. et al. (2023). Entomological monitoring data driving decision-making for appropriate and sustainable malaria vector control in Côte d'Ivoire. *Malaria Journal*, 22(1), 14. <https://doi.org/10.1186/s12936-023-04439-z>
+
+Longbottom, J., Krause, A., Torr, S.J. and Stanton, M.C. (2020). Quantifying geographic accessibility to improve efficiency of entomological monitoring. *PLoS Neglected Tropical Diseases*, 14(3), e0008096. <https://doi.org/10.1371/journal.pntd.0008096>
+
+Sedda, L., Lucas, E.R., Djogbénou, L.S., Edi, A.V.C., Egyir-Yawson, A., Kabula, B.I., Midega, J., Ochomo, E., Weetman, D. and Donnelly, M.J. (2019). Improved spatial ecological sampling using open data and standardization: an example from malaria mosquito surveillance. *Journal of the Royal Society Interface*, 16(153), 20180941. <https://doi.org/10.1098/rsif.2018.0941>
+
+Sedda, L., Jalilian, A., Opiyo, M., Gowelo, S., Marrenjo, D.J., Atta-Obeng, C., Boampong, E., Oppong, S.K., Owusu-Akrofi, O., Thomsen, E., Tatarsky, A., Malm, K.L., Candrinho, B. and Lobo, N.F. (2026). Evaluation of the Entomological Adaptive Surveillance Framework for malaria vector monitoring: a comparative field trial with routine surveillance in Ghana and Mozambique. *BMJ Public Health*, 4(1), e004060. <https://doi.org/10.1136/bmjph-2025-004060>
+
+Sugg, K.N., Mpata, F.W., Humes, M.D., Aliango Marachto, D., Rajan, R. and Winch, P.J. (2026). Positive tests are all alike, every negative test is negative in its own way: lack of confidence in negative malaria rapid diagnostic tests in the Democratic Republic of the Congo. *Malaria Journal*, 25(1), 133. <https://doi.org/10.1186/s12936-026-05802-6>
+:::
