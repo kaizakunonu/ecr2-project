@@ -1,0 +1,13 @@
+---
+title: "Notes"
+---
+
+2015 - 11 sentinel sites
+2020 - 26
+ Future plan 52
+
+ OBJ1 - Map the distribution of sentinel sites
+ OBJ2 - Map the travel-time from dps-> sentinel site: variables landuse, slope, road networks, population, health system structure.
+ OBJ3- 
+
+ (Democratic Republic of the Congo - Subnational Administrative Boundaries)[https://data.humdata.org/dataset/cod-ab-cod]
