@@ -1,15 +1,103 @@
-.Rproj.user
+# ============================================================
+# ecr2-project — single ignore file for the whole repository
+# (Files already tracked, e.g. proposal.html/pdf and the
+#  geocoding input CSVs, stay tracked regardless of these rules.
+#  Use `git add -f <file>` to deliberately commit an ignored file.)
+# ============================================================
+
+# ---- Secrets (GOOGLE_MAPS_API_KEY etc.) --------------------
+.Renviron
+.env
+.env.*
+
+# ---- R / RStudio / Positron --------------------------------
+.Rproj.user/
 .Rhistory
+.Rapp.history
 .RData
 .Ruserdata
+.positai
+renv/library/
+renv/local/
+renv/staging/
+
+# ---- Quarto ------------------------------------------------
+# The two lines below are kept verbatim so Quarto doesn't append them again
+/.quarto/
+**/*.quarto_ipynb
+.quarto/
+*_files/
+# Quarto auto-generates this nested file on render; rules live here instead
+geocoding/pipeline/.gitignore
+
+# ---- Rendered output (commit deliverables with `git add -f`) -
+*.html
+*.pdf
+
+# ---- LaTeX intermediates -----------------------------------
+*.tex
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# ---- Data (raw / large / sensitive) ------------------------
 data/
 *.csv
 *.xls
 *.xlsx
-/output
+# ...except the geocoding pipeline's inputs and reference tables
+!geocoding/input/*.csv
+!geocoding/reference/*.csv
+
+# ---- Geospatial rasters & vectors --------------------------
 *.tif
-*.DS_Store
-*.pdf
+*.tiff
+*.aux.xml
+*.nc
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.sbn
+*.sbx
+*.qix
+*.gpkg
+*.zip
+
+# ---- Generated results & caches ----------------------------
+/output/
+geocoding/output/
+geocoding/cache/
+
+# ---- Office documents & lock files -------------------------
+*.doc
+*.docx
 *.ppt
 *.pptx
-.positai
+.~lock.*#
+~$*
+
+# ---- Python ------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ---- OS & editors ------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+.Trash-*/
+.directory
+.vscode/
+.idea/
+.claude/settings.local.json
