@@ -1,0 +1,6 @@
+[project]
+name = "ecr2-project"
+r_version = ">=4.6.1"
+
+[dependencies]
+tidyverse = "*"
