@@ -2,9 +2,13 @@
 output/
 cache/
 
-# Quarto render output
+# Quarto render output (regenerate with `quarto render`)
 pipeline/*_files/
 pipeline/*.html
+pipeline/*.pdf
+pipeline/*.tex
+pipeline/*.log
+pipeline/*.aux
 
 # LibreOffice lock files
 .~lock.*#

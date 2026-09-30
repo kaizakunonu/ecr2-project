@@ -8,15 +8,38 @@ format:
     toc: true
     toc-depth: 3
     toc-location: left
+    toc-expand: true
     number-sections: true
     code-fold: true
     code-tools: true
+    code-overflow: wrap
+    embed-resources: true
+    link-external-newwindow: true
     theme: cosmo
     highlight-style: github
+    fig-width: 9
+    fig-height: 7
+    tbl-cap-location: top
   pdf:
     toc: true
+    toc-depth: 2
     number-sections: true
     colorlinks: true
+    papersize: a4
+    geometry:
+      - margin=2.5cm
+    fontsize: 11pt
+    linestretch: 1.15
+    fig-width: 6.5
+    fig-height: 7.5
+    fig-pos: "H"
+    tbl-cap-location: top
+    include-in-header:
+      text: |
+        % Long inline code (paths, API parameter names) cannot be hyphenated;
+        % prefer looser spacing over text running into the margin.
+        \sloppy
+pdf-engine: xelatex
 execute:
   echo: true
   warning: false
@@ -52,6 +75,8 @@ Accurate geolocation of sentinel sites supports:
 - Healthcare accessibility modelling
 - Intervention planning and optimisation
 - Care seeking and delivery modelling
+
+::: {.content-visible when-format="html"}
 
 ## System Requirements
 
@@ -98,6 +123,10 @@ library(leaflet)
 library(htmlwidgets)
 library(knitr)
 
+# The PDF is a report for review, not a code listing; HTML keeps the folded
+# source. Chunk output -- tables, figures, printed results -- is unaffected.
+knitr::opts_chunk$set(echo = knitr::is_html_output())
+
 source("config.R")
 source("geocode-functions.R")
 
@@ -123,6 +152,7 @@ if (nchar(google_api_key) == 0) {
 
 cat("Google Maps API key detected (", nchar(google_api_key), " characters).\n", sep = "")
 ```
+:::
 
 ## Province Validation
 
@@ -161,16 +191,19 @@ stopping at the first candidate that passes the quality gate. The rung that
 succeeded is recorded, so it is visible afterwards how hard the geocoder had to
 work.
 
-| Rung | `address` | `components` |
-|------|-----------|--------------|
-| 1 | `Zone de Sante de {site}` | `country:CD\|administrative_area:{province}` |
-| 2 | `{site}` | `country:CD\|administrative_area:{province}` |
-| 3 | `{site}, {province}, Republique Democratique du Congo` | `country:CD` |
-| 4 | `{site}` | `country:CD` |
+Rungs 1 and 2 send `components=country:CD|administrative_area:{province}`,
+pinning the province server-side. Rungs 3 and 4 send `components=country:CD`
+only.
 
-Rungs 1 and 2 pin the province server-side. Rung 3 drops that constraint but
-keeps the province as a search term. Rung 4 is a last resort restricted only by
-country.
+| Rung | `address` | Province pinned |
+|:-----|:------------------------------------------------------|:----------------|
+| 1 | `Zone de Sante de {site}` | yes |
+| 2 | `{site}` | yes |
+| 3 | `{site}, {province}, Republique Democratique du Congo` | no |
+| 4 | `{site}` | no |
+
+Rung 3 keeps the province as a search term but drops the server-side
+constraint; rung 4 is a last resort restricted only by country.
 
 Four requests per site at worst — around 100 in total, well inside the free
 monthly tier.
@@ -293,14 +326,18 @@ for (i in seq_len(nrow(sites))) {
   results[[i]] <- out$result
   audits[[i]]  <- out$audit
 
-  elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
-  cat(sprintf("[%2d/%2d] %-12s %-18s -> %-7s (rung %s) | %.2f min elapsed\n",
-              i, nrow(sites),
-              site_row$sentinel_site,
-              site_row$province,
-              out$result$confidence,
-              ifelse(is.na(out$result$resolved_at_rung), "-", out$result$resolved_at_rung),
-              elapsed))
+  # A per-site trace is useful when running interactively but is noise in a
+  # printed report, where the summary tables below say the same thing.
+  if (knitr::is_html_output()) {
+    elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
+    cat(sprintf("[%2d/%2d] %-12s %-18s -> %-7s (rung %s) | %.2f min elapsed\n",
+                i, nrow(sites),
+                site_row$sentinel_site,
+                site_row$province,
+                out$result$confidence,
+                ifelse(is.na(out$result$resolved_at_rung), "-", out$result$resolved_at_rung),
+                elapsed))
+  }
 }
 
 geocoded  <- bind_rows(results)
@@ -384,13 +421,12 @@ summary_stats <- final |>
     success_rate = sprintf("%.1f%%", 100 * sum(!is.na(latitude)) / n())
   )
 
-cat("\n=====================================\n")
-cat("RESULTS SUMMARY\n")
-cat("=====================================\n\n")
-cat("Total sites:", summary_stats$total_sites, "\n")
-cat("Successfully geocoded:", summary_stats$geocoded, "\n")
-cat("Failed:", summary_stats$failed, "\n")
-cat("Success rate:", summary_stats$success_rate, "\n\n")
+tibble(
+  Measure = c("Total sites", "Successfully geocoded", "Failed", "Success rate"),
+  Value   = c(summary_stats$total_sites, summary_stats$geocoded,
+              summary_stats$failed, summary_stats$success_rate)
+) |>
+  kable(caption = "Results summary")
 
 final |>
   count(confidence, name = "sites") |>
@@ -408,11 +444,14 @@ these health zones and the site names may need correcting in `site_name_fixes`.
 #| label: rung-analysis
 #| eval: true
 
-final |>
+rung_tbl <- final |>
   select(sentinel_site, province, matched_admin1, resolved_at_rung,
          confidence, location_type) |>
-  arrange(resolved_at_rung, sentinel_site) |>
-  kable(caption = "Resolution rung by site")
+  arrange(resolved_at_rung, sentinel_site)
+
+if (knitr::is_latex_output()) rung_tbl <- select(rung_tbl, -location_type)
+
+kable(rung_tbl, caption = "Resolution rung by site")
 
 final |>
   count(resolved_at_rung, name = "sites") |>
@@ -540,20 +579,33 @@ likely to resolve to something plausible but wrong.
 #| label: spot-check
 #| eval: true
 
-final |>
+spot <- final |>
   filter(!is.na(latitude)) |>
   transmute(
-    Site       = sentinel_site,
-    Province   = province,
-    Matched    = matched_address,
-    Confidence = confidence,
+    Site        = sentinel_site,
+    Province    = province,
+    Matched     = matched_address,
+    Confidence  = confidence,
     Coordinates = sprintf("%.4f, %.4f", latitude, longitude),
-    Verify = sprintf(
-      "[Google](https://www.google.com/maps/search/?api=1&query=%f,%f) / [OSM](https://www.openstreetmap.org/?mlat=%f&mlon=%f#map=12/%f/%f)",
-      latitude, longitude, latitude, longitude, latitude, longitude
-    )
-  ) |>
-  kable()
+    gmaps = sprintf("https://www.google.com/maps/search/?api=1&query=%f,%f",
+                    latitude, longitude),
+    osm   = sprintf("https://www.openstreetmap.org/?mlat=%f&mlon=%f#map=12/%f/%f",
+                    latitude, longitude, latitude, longitude)
+  )
+
+if (knitr::is_latex_output()) {
+  # Narrower for print: the matched address plus two links overruns the margin.
+  # colorlinks keeps the single remaining link clickable in the PDF.
+  spot |>
+    transmute(Site, Province, Confidence, Coordinates,
+              Verify = sprintf("[map](%s)", gmaps)) |>
+    kable()
+} else {
+  spot |>
+    transmute(Site, Province, Matched, Confidence, Coordinates,
+              Verify = sprintf("[Google](%s) / [OSM](%s)", gmaps, osm)) |>
+    kable()
+}
 ```
 
 ## Visualization
@@ -561,6 +613,7 @@ final |>
 ```{r}
 #| label: map-creation
 #| eval: true
+#| fig-cap: "Sentinel sites by geocoding confidence, over DRC province boundaries."
 
 mapped <- final |> filter(!is.na(latitude), !is.na(longitude))
 
@@ -611,11 +664,53 @@ if (nrow(mapped) > 0) {
             overwrite = TRUE)
   cat("Interactive map saved to: output/drc_sentinel_sites_map.html\n")
 
-  map
+  # An htmlwidget cannot be drawn into a PDF, so only HTML displays the leaflet.
+  # The widget is still built and saved above -- that file is a deliverable in
+  # either format; it is printing it that a PDF render cannot cope with.
+  if (knitr::is_html_output()) {
+    map
+  } else {
+    boundaries <- read.csv("../reference/drc_provinces.csv", stringsAsFactors = FALSE)
+
+    ggplot() +
+      geom_polygon(
+        data = boundaries,
+        aes(lon, lat, group = group),
+        fill = "grey94", colour = "grey65", linewidth = 0.25
+      ) +
+      geom_point(
+        data = mapped,
+        aes(longitude, latitude, fill = confidence),
+        shape = 21, size = 2.8, colour = "grey20", stroke = 0.4
+      ) +
+      geom_text(
+        data = mapped |>
+          arrange(latitude) |>
+          mutate(lab_vjust = if_else(row_number() %% 2 == 0, -1.1, 2.0)),
+        aes(longitude, latitude, label = sentinel_site, vjust = lab_vjust),
+        size = 2.2, colour = "grey15"
+      ) +
+      scale_fill_manual(
+        values = c(high = "#1a9850", medium = "#fee08b",
+                   low = "#f46d43", manual = "#3288bd"),
+        breaks = c("high", "medium", "low", "manual"),
+        name = "Confidence"
+      ) +
+      coord_fixed(1.05, expand = TRUE) +
+      labs(x = NULL, y = NULL) +
+      theme_minimal(base_size = 9) +
+      theme(
+        panel.grid = element_line(colour = "grey92", linewidth = 0.2),
+        legend.position = "bottom",
+        axis.text = element_text(colour = "grey45", size = 7)
+      )
+  }
 } else {
   cat("No sites were successfully geocoded. Map cannot be created.\n")
 }
 ```
+
+::: {.content-visible when-format="html"}
 
 ## Troubleshooting
 
@@ -668,24 +763,28 @@ no coordinate. Pin the true location in `manual_overrides.csv`.
 **Cause**: This is the response cache working as intended.
 
 **Solution**: Delete `../cache/google_geocode_cache.rds` to force fresh lookups.
+:::
 
 ## Output Files
 
-| File | Description | Format |
-|------|-------------|--------|
-| `drc_sentinel_sites_geocoded.csv` | Input columns plus coordinates and full provenance | CSV |
-| `drc_geocoding_candidates.csv` | Every candidate at every rung, accepted or rejected | CSV |
-| `drc_geocoding_review.csv` | Anything below `high` confidence | CSV |
-| `drc_geocoding_failed.csv` | Sites with no acceptable candidate | CSV |
-| `drc_out_of_bounds.csv` | Coordinates outside the DRC (only if any occur) | CSV |
-| `drc_sentinel_sites_map.html` | Interactive map | HTML |
+| File | Description |
+|:----------------------------------|:--------------------------------------|
+| `drc_sentinel_sites_geocoded.csv` | Input columns plus coordinates and full provenance |
+| `drc_geocoding_candidates.csv` | Every candidate at every rung, accepted or rejected |
+| `drc_geocoding_review.csv` | Anything below `high` confidence |
+| `drc_geocoding_failed.csv` | Sites with no acceptable candidate |
+| `drc_out_of_bounds.csv` | Coordinates outside the DRC (only if any occur) |
+| `drc_sentinel_sites_map.html` | Interactive map |
 
 ## Appendices
+
+::: {.content-visible when-format="html"}
 
 ### Appendix A: API Documentation
 
 - <a href="https://developers.google.com/maps/documentation/geocoding/overview" target="_blank" rel="noopener noreferrer">**Google Maps Geocoding API**</a>
 - <a href="https://developers.google.com/maps/documentation/geocoding/requests-geocoding#component-filtering" target="_blank" rel="noopener noreferrer">**Component filtering**</a> — the `country` and `administrative_area` restrictions this pipeline relies on
+:::
 
 ### Appendix B: DRC Geographic Context
 
@@ -696,6 +795,8 @@ no coordinate. Pin the true location in `manual_overrides.csv`.
 - French is the official language
 - Geographic bounds: latitude 13.5°S–5.4°N, longitude 12.0°E–31.4°E
 
+::: {.content-visible when-format="html"}
+
 ### Appendix C: Caching and Terms of Use
 
 Responses are cached in `../cache/google_geocode_cache.rds` so that
@@ -703,6 +804,7 @@ re-rendering costs no API calls and yields identical coordinates. Google Maps
 Platform terms permit only limited temporary caching of geocoding results
 (place IDs excepted), so this should be treated as a short-lived local
 convenience for iteration rather than a permanent store.
+:::
 
 ## Contact and Support
 

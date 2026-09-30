@@ -17,6 +17,7 @@ pipeline/  config.R                    country profile, province list, threshold
            geocode-functions.R         geocoder, quality gate, cache, overrides
            drc-geocoding-workflow.qmd  the workflow document -- run this
            test-geocode-functions.R    test suite
+reference/ drc_provinces.csv           province boundaries for the PDF map
 output/    generated results (git-ignored)
 cache/     cached API responses (git-ignored)
 ```
@@ -59,11 +60,31 @@ Roughly 100 requests per full run — comfortably inside the free monthly tier.
 ## Running
 
 ```bash
-quarto render pipeline/drc-geocoding-workflow.qmd --to html
+quarto render pipeline/drc-geocoding-workflow.qmd --to html   # interactive
+quarto render pipeline/drc-geocoding-workflow.qmd --to pdf    # report
 ```
+
+The two formats are deliberately different documents from one source:
+
+- **HTML** is for whoever runs the pipeline — interactive leaflet map, fold-out
+  R code, setup and troubleshooting sections. It is a single self-contained
+  file, so it can be emailed or moved without a companion folder.
+- **PDF** is a report for review — no code, no setup or troubleshooting, and a
+  static print map of the sites coloured by confidence.
 
 Responses are cached in `cache/`, so re-rendering costs no API calls and yields
 identical coordinates. Delete the cache file to force fresh lookups.
+
+The PDF needs a LaTeX installation. If you do not have one:
+
+```bash
+quarto install tinytex
+```
+
+The static map is drawn from `reference/drc_provinces.csv`, a flattened set of
+DRC province boundaries committed to this folder. It is plotted with ggplot2
+alone, so no spatial packages (and no GDAL/GEOS/PROJ system libraries) are
+needed.
 
 ## Tests
 
