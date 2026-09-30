@@ -107,9 +107,9 @@ install_if_missing <- function(packages) {
 install_if_missing(packages)
 ```
 
-Dependencies are managed with `renv` where a lockfile is available: if a
-`renv.lock` sits in the parent directory, run `renv::restore()` from there
-before rendering. Otherwise install the packages above directly with
+Dependencies are pinned with `uvr` in the repository root: run `uvr sync`
+there, then `source .uvr/activate` in the shell you render from. If this folder
+was copied out on its own, install the packages above directly with
 `install.packages()`. See `README.md` for the full setup.
 
 ```{r}

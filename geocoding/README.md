@@ -24,15 +24,24 @@ cache/     cached API responses (git-ignored)
 
 ## Setup
 
-R 4.0 or newer, plus Quarto. Required packages:
+R and Quarto. Required packages:
 
 ```
 tidyverse  httr  jsonlite  leaflet  htmlwidgets  knitr
 ```
 
-Dependencies are pinned with `renv` **in the parent directory**, not here. So:
+Dependencies are pinned with `uvr` **in the repository root** (`uvr.toml`,
+`uvr.lock`), not here. So:
 
-- If `../renv.lock` exists, run `renv::restore()` from that parent directory.
+- Inside the repository, install them once from the root, then activate the
+  project library in every shell you run the pipeline from:
+  ```bash
+  uvr sync                 # from the repository root
+  source .uvr/activate     # from the repository root; lasts for this shell
+  ```
+  Activation matters. The root `.Rprofile` links the project library only when
+  R starts in the root, and the pipeline runs from `geocoding/`. Without
+  activation R silently falls back to your user library.
 - If this folder was copied out on its own, there is no lockfile — install the
   packages directly:
   ```r
@@ -40,7 +49,7 @@ Dependencies are pinned with `renv` **in the parent directory**, not here. So:
                      "leaflet", "htmlwidgets", "knitr"))
   ```
 
-This is the only thing outside `drc/` that the pipeline depends on.
+This is the only thing outside `geocoding/` that the pipeline depends on.
 
 ## API key
 
@@ -51,6 +60,9 @@ the environment and never prints or writes it:
 ```bash
 export GOOGLE_MAPS_API_KEY="your-key-here"
 ```
+
+Export it in the shell rather than putting it in `.Renviron`: after
+`source .uvr/activate`, R no longer reads `.Renviron` files.
 
 A `REQUEST_DENIED` error almost always means the Geocoding API is not enabled on
 the project, or the key has referrer restrictions that block server-side use.
@@ -89,12 +101,13 @@ needed.
 ## Tests
 
 ```bash
-Rscript pipeline/test-geocode-functions.R
+cd pipeline && Rscript test-geocode-functions.R
 ```
 
-64 assertions, no API key and no network needed. Every Google response used is a
-verbatim fixture recorded from the live API, so the quality gate is exercised
-against what the API actually returns. Run these after any change to
+Run it from `pipeline/`: it sources `config.R` and `geocode-functions.R` by
+relative path. 64 assertions, no API key and no network needed. Every Google
+response used is a verbatim fixture recorded from the live API, so the quality
+gate is exercised against what the API actually returns. Run these after any change to
 `config.R` or `geocode-functions.R`.
 
 ## Outputs
