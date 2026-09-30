@@ -32,6 +32,9 @@ Usage
 -----
     python3 extract_sentinel_sites_26.py [--workbook X.xlsx] [--out Y.csv]
     python3 extract_sentinel_sites_26.py --audit     # show provenance per row
+
+By default the CSV is written straight to geocoding/input/, where the geocoding
+pipeline reads it. --audit output goes beside this script instead.
 """
 
 from __future__ import annotations
@@ -218,10 +221,17 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workbook", type=Path,
                     default=here / "DRC_Health_Zones_Sentinel_Sites.xlsx")
-    ap.add_argument("--out", type=Path, default=here / "drc_sentinel_sites_26.csv")
+    ap.add_argument("--out", type=Path,
+                    help="default: the geocoding pipeline's input CSV; with "
+                         "--audit, drc_sentinel_sites_26_audit.csv beside this script")
     ap.add_argument("--audit", action="store_true",
                     help="also emit province_source / source_cells / block columns")
     args = ap.parse_args()
+
+    # Audit columns must never land in the pipeline input by default.
+    if args.out is None:
+        args.out = (here / "drc_sentinel_sites_26_audit.csv" if args.audit
+                    else here / "geocoding" / "input" / "drc_sentinel_sites_26.csv")
 
     if not args.workbook.is_file():
         print(f"ERROR: workbook not found: {args.workbook}", file=sys.stderr)
