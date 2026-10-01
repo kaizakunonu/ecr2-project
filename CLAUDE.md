@@ -32,13 +32,16 @@ The root `.Rprofile` adds `.uvr/library` to the library path only when R starts 
 ```bash
 source .uvr/activate     # once per shell, from the repo root
 
-# Geocoding tests: 64 assertions, no network or API key needed.
+# Geocoding tests: 110 assertions, no network or API key needed.
 # Must run from pipeline/, because the script sources config.R by relative path.
 cd geocoding/pipeline && Rscript test-geocode-functions.R
 
 # Geocoding run (needs GOOGLE_MAPS_API_KEY; the cache makes re-renders free)
 cd geocoding && quarto render pipeline/drc-geocoding-workflow.qmd --to html
 cd geocoding && quarto render pipeline/drc-geocoding-workflow.qmd --to pdf   # xelatex
+
+# DPS headquarters + DPS-site pairs (needs the key; reads the sentinel output, so render that first)
+cd geocoding && quarto render pipeline/drc-dps-site-pairs.qmd --to html
 
 # Documents (the progress report's filename contains a space)
 quarto render proposal.qmd
@@ -59,11 +62,14 @@ The extractor combines two blocks from the workbook's `Metadata` sheet: the orig
 
 Its output is deterministic: rows are sorted by accent-folded province, then site. A regenerated input that differs from the committed CSV means the workbook or the crosswalk changed.
 
+A second flow pairs each site with its DPS (Division Provinciale de la Santé) headquarters. It uses `geocoding/input/drc_dps_26.csv` (DPS, province, chef-lieu) and `geocoding/input/drc_dps_site_pairs.csv` (`network, dps, sentinel_site`). It reads the sentinel output, and `drc-dps-site-pairs.qmd` writes `geocoding/output/drc_dps_site_pairs.csv`. The pairs were checked against the `2014` sheet of `30Sep/DRC_DPS.xlsx`, which is untracked. That workbook also lists the 2003–2005 (11) and 2021 (25) networks, which are not yet paired.
+
 ## Geocoding pipeline architecture (`geocoding/pipeline/`)
 
 - **`config.R`** contains everything specific to the DRC: the country profile (ISO code, language, bounding box, column names, id prefix), the 26 canonical post-2015 provinces, the quality-gate thresholds and site-name fixes. Pointing the pipeline at another country should mean editing only this file. `paths` are relative to `pipeline/`.
 - **`geocode-functions.R`** calls the Google Geocoding REST API directly with `httr`, not through a wrapper, because the quality gate needs `partial_match`, `location_type`, `types` and the result count. Its pieces:
-  - **Query ladder** (`build_query_variants`): rungs 1–2 pin `administrative_area` to the province, rungs 3–4 are country-restricted free text. `geocode_site` stops at the first accepted candidate and logs every candidate to an audit trail.
+  - **Query ladder** (`build_query_variants`): the rungs come from `ladders` in `config.R`, one ladder per point set (`sentinel_site`, `dps`). Rungs 1–2 pin `administrative_area` to the province, rungs 3–4 are country-restricted free text. `confidence_tier` depends on that split, so keep it. `geocode_site` stops at the first accepted candidate and logs every candidate to an audit trail.
+  - **DPS ladder**: tries the office first, then the chef-lieu, and always matches against the chef-lieu name. The gate cannot tell the office from another building in the same town, because the Geocoding API returns no establishment name. So `point_basis()` labels each result as an establishment or a settlement, and the DPS workflow sends every establishment result to review.
   - **Quality gate** (`assess_candidate`): *hard rejections* discard a candidate: an admin-area centroid, coordinates outside the bounding box, a returned province different from the expected one, or name similarity below `similarity_floor`. *Soft flags* lower confidence but keep the candidate. The province check is needed because Google treats the component filter as advisory. There is deliberately no blacklist on `establishment` / `point_of_interest` types.
   - **Confidence tiers** (`confidence_tier`): high / medium / low / failed, based on flag count and rung.
   - **Cache**: an `.rds` file keyed on address + components. Google's terms allow only short-lived caching, so treat it as disposable.

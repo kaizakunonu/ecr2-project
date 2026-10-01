@@ -1,0 +1,421 @@
+---
+title: "DPS Headquarters and Sentinel Site Pairs for the Democratic Republic of the Congo"
+subtitle: "Origin–Destination Coordinates for Sentinel Site Accessibility"
+author: "Kaiza Ilomo - Ifakara Health Institute - MoDD Africa Project"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    toc-expand: true
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-overflow: wrap
+    embed-resources: true
+    link-external-newwindow: true
+    theme: cosmo
+    highlight-style: github
+    fig-width: 9
+    fig-height: 7
+    tbl-cap-location: top
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Overview
+
+This document pairs each sentinel site with the **Division Provinciale de la
+Santé (DPS)** that oversees it, and gives both ends of every pair a
+coordinate. It is the input to the question *how accessible is each sentinel
+site from its DPS office?*
+
+The work has two point sets and one pairs table:
+
+| Piece | Source | Built by |
+|-------|--------|----------|
+| Sentinel sites | `../output/drc_sentinel_sites_geocoded.csv` | `drc-geocoding-workflow.qmd` |
+| DPS headquarters | `../input/drc_dps_26.csv` | this document |
+| Pairs | `../input/drc_dps_site_pairs.csv` (`network, dps, sentinel_site`) | this document |
+
+Sentinel sites are **not** geocoded again here. This document uses the
+reviewed output of the sentinel workflow, including its manual overrides.
+
+### How the DPS points are found
+
+Each DPS is geocoded with the same quality gate as the sentinel sites, through
+its own query ladder:
+
+1. The office itself: `Division Provinciale de la Sante <province>`, pinned to the province
+2. The chef-lieu town, pinned to the province
+3. The chef-lieu, province and country as free text
+4. The chef-lieu alone, restricted to the country
+
+Every rung's result is matched against the **chef-lieu name**. So an office
+result in the wrong town is refused by the gate. What the gate cannot do is tell
+the DPS office from another building in the right town, because the Geocoding
+API returns no establishment name. **Every establishment result therefore goes
+to review**, however high its confidence. To confirm one, pin it in
+`../input/dps_manual_overrides.csv`.
+
+## Setup
+
+```{r}
+#| label: load-libraries
+#| eval: true
+
+library(tidyverse)
+library(httr)
+library(jsonlite)
+library(leaflet)
+library(htmlwidgets)
+library(knitr)
+
+knitr::opts_chunk$set(echo = knitr::is_html_output())
+
+source("config.R")
+source("geocode-functions.R")
+source("pairs-functions.R")
+
+dir.create(paths$output, showWarnings = FALSE, recursive = TRUE)
+```
+
+The key is read from `GOOGLE_MAPS_API_KEY` and is never printed or written. It
+is needed even when every response comes from the cache.
+
+```{r}
+#| label: api-key-check
+#| eval: true
+
+if (!nzchar(Sys.getenv("GOOGLE_MAPS_API_KEY"))) {
+  stop("GOOGLE_MAPS_API_KEY is not set. Export it before rendering this document.")
+}
+cat("Google Maps API key detected.\n")
+```
+
+## Inputs
+
+### DPS headquarters
+
+`province` is the post-2015 province that the DPS seat lies in. The gate
+checks it. `chef_lieu` is the town the office is in, and it is the name that
+every candidate is matched against.
+
+```{r}
+#| label: dps-input
+#| eval: true
+
+dps <- read.csv(paths$dps_input, stringsAsFactors = FALSE) |>
+  ensure_site_id(dps_profile) |>
+  distinct(dps_id, .keep_all = TRUE)
+
+validate_provinces(dps)
+cat("DPS headquarters:", nrow(dps), "| provinces:", length(unique(dps$province)), "\n")
+
+dps |>
+  select(dps_id, dps, province, chef_lieu) |>
+  kable(caption = "DPS headquarters to geocode")
+```
+
+### Pairs and sentinel sites
+
+```{r}
+#| label: pairs-input
+#| eval: true
+
+pairs_in <- read.csv(paths$pairs, stringsAsFactors = FALSE,
+                     colClasses = c(network = "character"))
+
+sites_path <- file.path(paths$output, "drc_sentinel_sites_geocoded.csv")
+if (!file.exists(sites_path)) {
+  stop("Sentinel site coordinates not found at ", sites_path,
+       ". Render drc-geocoding-workflow.qmd first.")
+}
+sites <- read.csv(sites_path, stringsAsFactors = FALSE)
+
+pairs_in |>
+  count(network, name = "pairs") |>
+  kable(caption = "Pairs by network")
+
+sites |>
+  count(confidence, name = "sites") |>
+  kable(caption = "Sentinel site coordinates by confidence")
+```
+
+## Geocoding the DPS Headquarters
+
+### Query ladder
+
+```{r}
+#| label: dps-ladder-example
+#| eval: true
+
+build_query_variants("Kananga", "Kasaï-Central", ladder = ladders$dps) |>
+  kable(caption = "DPS query ladder, for DPS Kasaï-Central")
+```
+
+### Processing loop
+
+```{r}
+#| label: dps-processing-loop
+#| eval: true
+
+n_cached <- cache_load()
+cat("Cached responses available:", n_cached, "\n\n")
+
+results <- list()
+audits  <- list()
+
+for (i in seq_len(nrow(dps))) {
+  row <- dps[i, ]
+  out <- geocode_site(
+    site_id  = row$dps_id,
+    site     = row$chef_lieu,
+    province = row$province,
+    ladder   = ladders$dps
+  )
+  results[[i]] <- out$result
+  audits[[i]]  <- out$audit
+
+  cat(sprintf("[%2d/%2d] %-20s %-12s -> %-7s (rung %s)\n",
+              i, nrow(dps), row$dps, row$chef_lieu, out$result$confidence,
+              ifelse(is.na(out$result$resolved_at_rung), "-",
+                     out$result$resolved_at_rung)))
+}
+
+dps_geocoded   <- bind_rows(results) |> rename(dps_id = site_id)
+dps_candidates <- bind_rows(audits)  |> rename(dps_id = site_id)
+
+cache_save()
+cat("\nAPI calls made:", .geocode_cache$calls,
+    "| served from cache:", .geocode_cache$hits, "\n")
+```
+
+### Manual overrides and review
+
+A row goes to review if any of these is true:
+
+- It was not resolved at high confidence.
+- It resolved to anything other than a town or neighbourhood centroid, unless it
+  was pinned by hand. For example, a building that may or may not be the DPS
+  office.
+
+```{r}
+#| label: dps-overrides-review
+#| eval: true
+
+dps_geocoded <- apply_manual_overrides(dps_geocoded, paths$dps_overrides,
+                                       id_col = "dps_id") |>
+  mutate(point_basis = if_else(geocode_status == "manual", "manual",
+                               point_basis(matched_types)))
+
+dps_final <- dps |>
+  left_join(dps_geocoded, by = "dps_id") |>
+  mutate(
+    review_reason = case_when(
+      confidence == "failed"                     ~ "no acceptable candidate",
+      confidence == "manual"                     ~ NA_character_,
+      point_basis == "establishment"             ~ "building in the right town: confirm it is the DPS office",
+      point_basis == "other"                     ~ "resolved to a street or other non-settlement",
+      confidence != "high"                       ~ paste0(
+        confidence, " confidence, rung ", resolved_at_rung,
+        if_else(coalesce(quality_flags, "") != "", paste0(": ", quality_flags), "")
+      ),
+      TRUE                                       ~ NA_character_
+    )
+  )
+
+dps_review <- dps_final |> filter(!is.na(review_reason))
+
+write.csv(dps_final, file.path(paths$output, "drc_dps_geocoded.csv"), row.names = FALSE)
+write.csv(dps_candidates, file.path(paths$output, "drc_dps_candidates.csv"), row.names = FALSE)
+write.csv(dps_review, file.path(paths$output, "drc_dps_review.csv"), row.names = FALSE)
+
+cat("Manual overrides applied:", sum(dps_final$confidence == "manual"), "\n")
+cat("Review queue:", nrow(dps_review), "of", nrow(dps_final), "DPS\n")
+
+dps_final |>
+  count(point_basis, confidence, name = "dps") |>
+  kable(caption = "DPS coordinates by basis and confidence")
+
+dps_final |>
+  select(dps, chef_lieu, resolved_at_rung, confidence, point_basis, matched_address) |>
+  kable(caption = "DPS geocoding results")
+```
+
+```{r}
+#| label: dps-review-table
+#| eval: true
+
+if (nrow(dps_review) > 0) {
+  dps_review |>
+    select(dps, chef_lieu, point_basis, confidence, matched_address, review_reason) |>
+    kable(caption = "DPS review queue")
+} else {
+  cat("Nothing to review.\n")
+}
+```
+
+## Pairs
+
+`straight_line_km` is a great-circle distance, not a travel distance. It is here
+to catch blunders and to show which pairs are **co-located**, meaning under
+1 km apart. That usually means the sentinel site is in the DPS town itself, and
+both ends were resolved to the same town centroid.
+
+```{r}
+#| label: build-pairs
+#| eval: true
+
+od <- build_pairs(pairs_in, dps_final, sites)
+
+write.csv(od, file.path(paths$output, "drc_dps_site_pairs.csv"), row.names = FALSE)
+cat("Pairs saved to: output/drc_dps_site_pairs.csv\n")
+
+od |>
+  group_by(network) |>
+  summarise(
+    pairs              = n(),
+    complete           = sum(complete),
+    co_located         = sum(co_located),
+    dps_establishment  = sum(dps_basis == "establishment", na.rm = TRUE),
+    dps_settlement     = sum(dps_basis == "settlement", na.rm = TRUE),
+    dps_manual         = sum(dps_basis == "manual", na.rm = TRUE),
+    province_mismatch  = sum(province_mismatch)
+  ) |>
+  kable(caption = "Pairs by network")
+```
+
+### Incomplete pairs
+
+```{r}
+#| label: incomplete-pairs
+#| eval: true
+
+incomplete <- od |> filter(!complete)
+if (nrow(incomplete) > 0) {
+  incomplete |>
+    select(network, dps, sentinel_site, dps_confidence, site_confidence) |>
+    kable(caption = "Pairs missing a coordinate at one end")
+} else {
+  cat("Every pair has coordinates at both ends.\n")
+}
+```
+
+### Co-located pairs
+
+```{r}
+#| label: co-located-pairs
+#| eval: true
+
+co_loc <- od |> filter(co_located)
+if (nrow(co_loc) > 0) {
+  co_loc |>
+    select(network, dps, chef_lieu, sentinel_site, dps_basis, straight_line_km) |>
+    mutate(straight_line_km = round(straight_line_km, 2)) |>
+    kable(caption = "Pairs under 1 km apart")
+} else {
+  cat("No co-located pairs.\n")
+}
+```
+
+### All pairs
+
+```{r}
+#| label: all-pairs
+#| eval: true
+
+od |>
+  transmute(
+    network, dps, sentinel_site,
+    dps_lat = round(dps_lat, 4), dps_lon = round(dps_lon, 4),
+    site_lat = round(site_lat, 4), site_lon = round(site_lon, 4),
+    km = round(straight_line_km, 1), dps_basis
+  ) |>
+  kable(caption = "DPS–site pairs")
+```
+
+## Map
+
+```{r}
+#| label: pairs-map
+#| eval: true
+#| fig-cap: "DPS headquarters and sentinel sites, joined by pair."
+
+lines <- od |> filter(complete)
+
+map <- leaflet() |>
+  addTiles() |>
+  addCircleMarkers(
+    data = dps_final |> filter(!is.na(latitude)),
+    lng = ~longitude, lat = ~latitude, group = "DPS",
+    color = "#b2182b", radius = 7, fillOpacity = 0.8,
+    label = ~dps,
+    popup = ~paste0("<b>", dps, "</b><br>",
+                    "<b>Chef-lieu:</b> ", chef_lieu, "<br>",
+                    "<b>Basis:</b> ", point_basis, "<br>",
+                    "<b>Confidence:</b> ", confidence, "<br>",
+                    "<b>Matched address:</b> ", matched_address)
+  ) |>
+  addCircleMarkers(
+    data = sites |> filter(!is.na(latitude)),
+    lng = ~longitude, lat = ~latitude, group = "Sentinel sites",
+    color = "#2166ac", radius = 5, fillOpacity = 0.8,
+    label = ~sentinel_site,
+    popup = ~paste0("<b>", sentinel_site, "</b><br>",
+                    "<b>Province:</b> ", province, "<br>",
+                    "<b>Confidence:</b> ", confidence)
+  )
+
+for (i in seq_len(nrow(lines))) {
+  map <- map |>
+    addPolylines(lng = c(lines$dps_lon[i], lines$site_lon[i]),
+                 lat = c(lines$dps_lat[i], lines$site_lat[i]),
+                 color = "#4d4d4d", weight = 2, opacity = 0.7, group = "Pairs",
+                 label = paste0(lines$dps[i], " → ", lines$sentinel_site[i], ": ",
+                                round(lines$straight_line_km[i], 1), " km"))
+}
+
+map <- map |>
+  addLayersControl(overlayGroups = c("DPS", "Sentinel sites", "Pairs"),
+                   options = layersControlOptions(collapsed = FALSE))
+
+# Build in a temp directory: saveWidget() leaves a scratch "*_files" folder
+# beside its target even when the result is fully self-contained.
+staged <- file.path(tempdir(), "drc_dps_site_pairs_map.html")
+saveWidget(map, staged, selfcontained = TRUE)
+file.copy(staged, file.path(paths$output, "drc_dps_site_pairs_map.html"), overwrite = TRUE)
+
+map
+```
+
+## Extending to Other Networks
+
+A network is a set of rows in `../input/drc_dps_site_pairs.csv`, tagged with
+its `network`. Both of its points must be in a registry first.
+
+- **2003–2005 (11 sites).** All 11 original sites are already among the 26.
+  Add the 11 pre-2015 DPS to `drc_dps_26.csv`, for example
+  `DPS Bandundu, Kwilu, Bandundu`. The DPS name keeps the old province, and
+  `province` gives the current province its seat lies in. Every pre-2015 DPS
+  seat is also a current chef-lieu. Then add the 11 pair rows.
+- **2021 (25 sites).** Add the new sites to the sentinel input and re-render
+  `drc-geocoding-workflow.qmd`. The DPS are the same 26. Then add the pair rows.
+  If a pair names a site that has not been geocoded, the build stops and lists
+  it.
+
+## Output Files
+
+| File | Description |
+|:-------------------------------|:-----------------------------------------|
+| `drc_dps_site_pairs.csv` | One row per pair: both coordinates, provenance, straight-line km and flags |
+| `drc_dps_geocoded.csv` | DPS input columns plus coordinates, basis and review reason |
+| `drc_dps_candidates.csv` | Every DPS candidate at every rung, accepted or rejected |
+| `drc_dps_review.csv` | DPS to check by hand |
+| `drc_dps_site_pairs_map.html` | Interactive map of the pairs |
+
+All outputs are git-ignored. Google's terms allow only limited caching of
+geocoding results.

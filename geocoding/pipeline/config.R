@@ -22,12 +22,23 @@ country_profile <- list(
   id_prefix        = "DRC"
 )
 
+# The DPS headquarters are a second point set, geocoded with the same gate.
+# `dps` names the office; `province` is the post-2015 province its seat lies in,
+# which is what the gate checks, even for a pre-2015 DPS such as Bandundu.
+dps_profile <- modifyList(country_profile, list(
+  site_col = "dps",
+  id_col   = "dps_id"
+))
+
 # File locations, relative to the pipeline/ directory
 paths <- list(
-  input     = "../input/drc_sentinel_sites_26.csv",
-  overrides = "../input/manual_overrides.csv",
-  cache     = "../cache/google_geocode_cache.rds",
-  output    = "../output"
+  input         = "../input/drc_sentinel_sites_26.csv",
+  overrides     = "../input/manual_overrides.csv",
+  dps_input     = "../input/drc_dps_26.csv",
+  dps_overrides = "../input/dps_manual_overrides.csv",
+  pairs         = "../input/drc_dps_site_pairs.csv",
+  cache         = "../cache/google_geocode_cache.rds",
+  output        = "../output"
 )
 
 # ---------------------------------------------------------------------------
@@ -61,6 +72,49 @@ drc_provinces <- c(
 gate <- list(
   similarity_floor = 0.60,  # below this, reject: the returned name is unrelated
   similarity_clean = 0.90   # at or above this, partial_match is not held against it
+)
+
+# ---------------------------------------------------------------------------
+# Query ladders
+# ---------------------------------------------------------------------------
+#
+# One ladder per point set. `{name}` is the point's name, `{province}` its
+# province and `{country}` the French country name. Pinned rungs restrict
+# Google's administrative_area component to the province.
+#
+# Keep rungs 1-2 pinned and 3-4 free text: confidence_tier() reads the rung
+# number, and only rungs 1-2 can reach `high`.
+#
+# The DPS ladder asks for the office first but always matches the result
+# against `{name}`, the chef-lieu, so a building in the wrong town is refused
+# by the similarity rule. It cannot tell the office from another building in
+# the right town -- the workflow sends every such hit to review.
+
+ladders <- list(
+  sentinel_site = data.frame(
+    rung     = 1:4,
+    label    = c("1: health zone + province ({province})",
+                 "2: site + province ({province})",
+                 "3: site, province, country (free text)",
+                 "4: site name only, country-restricted"),
+    template = c("Zone de Sante de {name}",
+                 "{name}",
+                 "{name}, {province}, {country}",
+                 "{name}"),
+    pinned   = c(TRUE, TRUE, FALSE, FALSE)
+  ),
+  dps = data.frame(
+    rung     = 1:4,
+    label    = c("1: DPS office + province ({province})",
+                 "2: chef-lieu + province ({province})",
+                 "3: chef-lieu, province, country (free text)",
+                 "4: chef-lieu only, country-restricted"),
+    template = c("Division Provinciale de la Sante {province}",
+                 "{name}",
+                 "{name}, {province}, {country}",
+                 "{name}"),
+    pinned   = c(TRUE, TRUE, FALSE, FALSE)
+  )
 )
 
 # ---------------------------------------------------------------------------

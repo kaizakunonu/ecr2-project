@@ -9,6 +9,7 @@
 suppressMessages({
   source("config.R")
   source("geocode-functions.R")
+  source("pairs-functions.R")
 })
 
 pass <- 0; fail <- 0
@@ -68,6 +69,16 @@ dupes <- data.frame(province = c("Kwilu", "Lomami"), sentinel_site = c("Vanga", 
 ok("duplicate site names are refused",
    inherits(try(ensure_site_id(dupes), silent = TRUE), "try-error"))
 
+dps_in <- read.csv(paths$dps_input, stringsAsFactors = FALSE)
+dps_ids <- ensure_site_id(dps_in, dps_profile)$dps_id
+ok("DPS input has 26 rows",               nrow(dps_in) == 26)
+ok("DPS input uses current provinces",    !is.null(validate_provinces(dps_in)))
+ok("dps_id is derived from the DPS name", "DRC-DPS-KASAI-CENTRAL" %in% dps_ids)
+ok("dps_id folds accents",                "DRC-DPS-MAI-NDOMBE" %in% dps_ids)
+ok("dps_ids never collide with site_ids",
+   length(intersect(dps_ids, with_ids$site_id)) == 0)
+ok("make_id agrees with ensure_site_id",  identical(make_id(sites$sentinel_site), with_ids$site_id))
+
 # ---------------------------------------------------------------------------
 section("Query ladder")
 v <- build_query_variants("Vanga", "Kwilu")
@@ -84,6 +95,17 @@ ok("site-name fix flows into queries",
    all(grepl("Mwene-Ditu", build_query_variants("Mwene-ditu", "Lomami")$address)))
 ok("accented provinces pass through",
    grepl("administrative_area:Kasaï", build_query_variants("Mikalayi", "Kasaï")$components[1]))
+ok("rung labels name the province",       v$rung_label[1] == "1: health zone + province (Kwilu)")
+
+d <- build_query_variants("Kananga", "Kasaï-Central", ladder = ladders$dps)
+ok("DPS ladder is 4 rungs",               nrow(d) == 4 && identical(d$rung, 1:4))
+ok("DPS rung 1 asks for the office",      d$address[1] == "Division Provinciale de la Sante Kasaï-Central")
+ok("DPS rung 2 falls back to the town",   d$address[2] == "Kananga")
+ok("DPS rungs 1-2 pin the province",
+   all(d$components[1:2] == "country:CD|administrative_area:Kasaï-Central"))
+ok("DPS rungs 3-4 are country-only",      all(d$components[3:4] == "country:CD"))
+ok("apostrophes survive templating",
+   build_query_variants("N'Gandajika", "Lomami")$address[1] == "Zone de Sante de N'Gandajika")
 
 # ---------------------------------------------------------------------------
 section("Quality gate: regressions from real API responses")
@@ -161,6 +183,64 @@ ok("rung 4, 0 flags -> low",              confidence_tier(clean, 4) == "low")
 ok("rung 1, 2 flags -> low",              confidence_tier(list(accepted = TRUE, n_flags = 2L), 1) == "low")
 
 # ---------------------------------------------------------------------------
+section("Point basis")
+ok("a POI is an establishment",           point_basis(mikalayi_poi$types) == "establishment")
+ok("a locality is a settlement",          point_basis(rutshuru$types) == "settlement")
+ok("a sublocality is a settlement",       point_basis(bolenge$types) == "settlement")
+ok("a province centroid is other",
+   point_basis("administrative_area_level_1|political") == "other")
+ok("a failed row has no basis",           is.na(point_basis(NA_character_)))
+ok("point_basis is vectorised",
+   identical(point_basis(c(rutshuru$types, kingasani$types)), c("settlement", "establishment")))
+
+# Why every DPS office hit goes to review: the gate matches against the town,
+# and the Kingasani street -- a real response -- is in the right town. As a
+# "DPS Kinshasa" candidate it passes cleanly, whatever building it is.
+a_dps_kin <- assess_candidate(kingasani, "Kinshasa", "Kinshasa", n_results = 1L)
+ok("a building in the right town passes the gate", a_dps_kin$accepted)
+ok("...at high confidence",               confidence_tier(a_dps_kin, 1) == "high")
+ok("...so only its basis can flag it",    point_basis(kingasani$types) == "establishment")
+
+# ---------------------------------------------------------------------------
+section("DPS ladder: regressions from real API responses")
+
+# Rung 1 for 24 of 26 DPS: Google has no DPS office and returns the province.
+kc_office <- candidate("Kasaï-Central, République démocratique du Congo", "APPROXIMATE",
+                       "administrative_area_level_1|political", TRUE, "Kasaï-Central",
+                       lat = -6.2514921, lon = 22.2384017)
+a_kc <- assess_candidate(kc_office, "Kananga", "Kasaï-Central", 1L)
+ok("an office query's province centroid is REJECTED", !a_kc$accepted)
+ok("...as an admin centroid",             grepl("administrative-area centroid", a_kc$reject_reason))
+
+# Rung 1 for DPS Lualaba: a real village called Lualaba, in the right province,
+# about 30 km from Kolwezi. It is a locality, so neither the centroid rule nor
+# point_basis objects -- only matching against the chef-lieu refuses it.
+lualaba <- candidate("Lualaba, République démocratique du Congo", "APPROXIMATE",
+                     "locality|political", TRUE, "Lualaba", "Lualaba",
+                     lat = -10.48087, lon = 25.634159)
+a_lua <- assess_candidate(lualaba, "Kolwezi", "Lualaba", 1L)
+ok("a same-province village named for the province is REJECTED", !a_lua$accepted)
+ok("...on the name alone",
+   grepl("unrelated", a_lua$reject_reason) && !grepl("centroid", a_lua$reject_reason))
+ok("...which point_basis would not have caught", point_basis(lualaba$types) == "settlement")
+
+# Rung 1 for DPS Kinshasa: the office query returns the city itself.
+kin_office <- candidate("Kinshasa, République démocratique du Congo", "APPROXIMATE",
+                        "locality|political", TRUE, "Kinshasa", "Kinshasa",
+                        lat = -4.3032527, lon = 15.310528)
+a_kin <- assess_candidate(kin_office, "Kinshasa", "Kinshasa", 1L)
+ok("an office query answered by the town is accepted", a_kin$accepted)
+ok("...at high confidence",               confidence_tier(a_kin, 1) == "high")
+ok("...and labelled a settlement, not an office", point_basis(kin_office$types) == "settlement")
+
+# Rung 2 for DPS Kasaï-Central: the chef-lieu fallback.
+kananga <- candidate("Kananga, République démocratique du Congo", "APPROXIMATE",
+                     "locality|political", FALSE, "Kasaï-Central", "Kananga",
+                     lat = -5.897522, lon = 22.4172256)
+a_kan <- assess_candidate(kananga, "Kananga", "Kasaï-Central", 1L)
+ok("the chef-lieu fallback reaches HIGH", a_kan$accepted && confidence_tier(a_kan, 2) == "high")
+
+# ---------------------------------------------------------------------------
 section("Response cache")
 tmp <- tempfile(fileext = ".rds")
 cache_load(tmp)
@@ -195,7 +275,58 @@ ok("override stamps status manual",       res$geocode_status[2] == "manual")
 ok("override carries the note",           res$quality_flags[2] == "pinned from field GPS")
 ok("override leaves other rows alone",    res$latitude[1] == -4.4)
 ok("override preserves the column set",   setequal(names(res), names(base)))
-unlink(c(empty, filled))
+
+dps_base <- base |> rename(dps_id = site_id) |>
+  mutate(dps_id = c("DRC-DPS-KWILU", "DRC-DPS-KASAI-CENTRAL"))
+dps_filled <- tempfile(fileext = ".csv")
+writeLines(c("dps_id,latitude,longitude,note",
+             "DRC-DPS-KASAI-CENTRAL,-5.89,22.42,office confirmed"), dps_filled)
+dps_res <- apply_manual_overrides(dps_base, dps_filled, id_col = "dps_id")
+ok("overrides can key on dps_id",         dps_res$latitude[2] == -5.89 && dps_res$confidence[2] == "manual")
+ok("a dps_id override leaves others",     dps_res$latitude[1] == -4.4)
+unlink(c(empty, filled, dps_filled))
+
+# ---------------------------------------------------------------------------
+section("Pairs")
+ok("haversine: same point is 0 km",       haversine_km(-4, 18, -4, 18) == 0)
+ok("haversine: 1 degree of latitude",     abs(haversine_km(0, 20, 1, 20) - 111.19) < 0.01)
+
+reg_dps <- tibble(dps_id = c("DRC-DPS-BAS-UELE", "DRC-DPS-KASAI-CENTRAL"),
+                  dps = c("DPS Bas-Uele", "DPS Kasaï-Central"),
+                  province = c("Bas-Uele", "Kasaï-Central"),
+                  chef_lieu = c("Buta", "Kananga"),
+                  latitude = c(2.8045317, -5.9), longitude = c(24.7499112, 22.4),
+                  confidence = "high", point_basis = "settlement")
+reg_sites <- tibble(site_id = c("DRC-BUTA", "DRC-MIKALAYI"),
+                    sentinel_site = c("Buta", "Mikalayi"),
+                    province = c("Bas-Uele", "Kasaï-Central"),
+                    latitude = c(2.8045317, NA), longitude = c(24.7499112, NA),
+                    confidence = c("high", "failed"))
+pair_in <- tibble(network = "2014", dps = c("DPS Bas-Uele", "DPS Kasai-Central"),
+                  sentinel_site = c("Buta", "Mikalayi"))
+pp <- build_pairs(pair_in, reg_dps, reg_sites)
+ok("pairs resolve names to both ids",     identical(pp$dps_id, reg_dps$dps_id))
+ok("a town site is co-located with its DPS", pp$co_located[1] && pp$straight_line_km[1] == 0)
+ok("a site without coordinates is incomplete", !pp$complete[2] && !pp$co_located[2])
+ok("an incomplete pair is kept, not dropped", nrow(pp) == 2)
+ok("matching provinces raise no mismatch", !any(pp$province_mismatch))
+ok("an unknown site stops the build",
+   inherits(try(build_pairs(tibble(network = "2021", dps = "DPS Bas-Uele",
+                                   sentinel_site = "Bondo"),
+                            reg_dps, reg_sites), silent = TRUE), "try-error"))
+ok("a site paired twice in a network stops the build",
+   inherits(try(build_pairs(bind_rows(pair_in, pair_in), reg_dps, reg_sites),
+                silent = TRUE), "try-error"))
+ok("the same pair in two networks is fine",
+   nrow(build_pairs(bind_rows(pair_in, mutate(pair_in, network = "2003_2005")),
+                    reg_dps, reg_sites)) == 4)
+
+pairs_in <- read.csv(paths$pairs, stringsAsFactors = FALSE)
+ok("pairs input has 26 rows for 2014",    sum(pairs_in$network == "2014") == 26)
+ok("every pair's DPS is in the registry",
+   all(make_id(pairs_in$dps) %in% dps_ids))
+ok("every pair's site is in the input",
+   all(make_id(pairs_in$sentinel_site) %in% with_ids$site_id))
 
 # ---------------------------------------------------------------------------
 cat("\n=====================================\n")

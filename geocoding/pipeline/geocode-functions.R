@@ -76,17 +76,26 @@ validate_provinces <- function(sites, provinces = drc_provinces,
 ensure_site_id <- function(sites, profile = country_profile) {
   if (!is.null(sites[[profile$id_col]])) return(sites)
 
-  slug <- normalise_name(sites[[profile$site_col]]) |>
-    str_replace_all(" ", "-") |>
-    str_to_upper()
+  ids <- make_id(sites[[profile$site_col]], profile$id_prefix)
 
-  if (anyDuplicated(slug)) {
+  if (anyDuplicated(ids)) {
     stop("Site names are not unique, so they cannot form a stable site_id: ",
-         paste(unique(slug[duplicated(slug)]), collapse = ", "), call. = FALSE)
+         paste(unique(ids[duplicated(ids)]), collapse = ", "), call. = FALSE)
   }
 
-  sites[[profile$id_col]] <- paste0(profile$id_prefix, "-", slug)
+  sites[[profile$id_col]] <- ids
   sites
+}
+
+#' The identifier for a name: "Mwene-ditu" -> "DRC-MWENE-DITU".
+#'
+#' Separate from ensure_site_id() so that a pairs table, where the same DPS
+#' recurs across networks, can derive the same keys without the uniqueness check.
+make_id <- function(x, prefix = country_profile$id_prefix) {
+  slug <- normalise_name(x) |>
+    str_replace_all(" ", "-") |>
+    str_to_upper()
+  paste0(prefix, "-", slug)
 }
 
 # ---------------------------------------------------------------------------
@@ -247,27 +256,29 @@ parse_google_result_empty <- function() {
 #' verified against the response in assess_candidate(). Rungs 3-4 are free-text
 #' fallbacks for sites the province-constrained queries miss, still restricted
 #' to the country.
-build_query_variants <- function(site, province, profile = country_profile) {
+#'
+#' The rung wording comes from `ladder` (see `ladders` in config.R), so another
+#' point set -- the DPS headquarters -- reuses the ladder walk and the gate with
+#' its own queries.
+build_query_variants <- function(site, province, profile = country_profile,
+                                 ladder = ladders$sentinel_site) {
 
   site <- fix_site_name(site)
   cc   <- paste0("country:", profile$country_code)
   pinned <- paste0(cc, "|administrative_area:", province)
 
+  fill <- function(template) {
+    template |>
+      str_replace_all(fixed("{name}"), site) |>
+      str_replace_all(fixed("{province}"), province) |>
+      str_replace_all(fixed("{country}"), profile$name_fr)
+  }
+
   tibble(
-    rung       = c(1L, 2L, 3L, 4L),
-    rung_label = c(
-      paste0("1: health zone + province (", province, ")"),
-      paste0("2: site + province (", province, ")"),
-      "3: site, province, country (free text)",
-      "4: site name only, country-restricted"
-    ),
-    address = c(
-      paste0("Zone de Sante de ", site),
-      site,
-      paste(site, province, profile$name_fr, sep = ", "),
-      site
-    ),
-    components = c(pinned, pinned, cc, cc)
+    rung       = as.integer(ladder$rung),
+    rung_label = fill(ladder$label),
+    address    = fill(ladder$template),
+    components = if_else(ladder$pinned, pinned, cc)
   )
 }
 
@@ -368,6 +379,30 @@ confidence_tier <- function(assessment, rung) {
   "low"
 }
 
+ESTABLISHMENT_TYPES <- c("establishment", "point_of_interest", "premise",
+                         "subpremise", "health", "hospital",
+                         "local_government_office")
+SETTLEMENT_TYPES    <- c("locality", "sublocality", "neighborhood",
+                         "colloquial_area", "administrative_area_level_3",
+                         "administrative_area_level_4")
+
+#' What kind of place a result is: "establishment", "settlement" or "other".
+#'
+#' Not part of the gate. A settlement is a town or neighbourhood centroid; an
+#' establishment is a building. The Geocoding API returns no establishment
+#' name, so an establishment in the right town passes the gate whichever
+#' building it is. The DPS workflow uses this to send such hits to review.
+point_basis <- function(types) {
+  map_chr(str_split(types, fixed("|")), function(t) {
+    t <- t[!is.na(t)]
+    if (length(t) == 0)                         return(NA_character_)
+    if (any(t %in% ESTABLISHMENT_TYPES))        return("establishment")
+    if (any(t %in% SETTLEMENT_TYPES) ||
+        any(startsWith(t, "sublocality")))      return("settlement")
+    "other"
+  })
+}
+
 # ---------------------------------------------------------------------------
 # Per-site resolution
 # ---------------------------------------------------------------------------
@@ -376,9 +411,10 @@ confidence_tier <- function(assessment, rung) {
 #'
 #' Returns a list of `result` (single row) and `audit` (every candidate seen at
 #' every rung, accepted or not).
-geocode_site <- function(site_id, site, province, profile = country_profile) {
+geocode_site <- function(site_id, site, province, profile = country_profile,
+                         ladder = ladders$sentinel_site) {
 
-  variants  <- build_query_variants(site, province, profile)
+  variants  <- build_query_variants(site, province, profile, ladder)
   expected  <- province
   audit     <- list()
   resolved  <- NULL
@@ -390,7 +426,7 @@ geocode_site <- function(site_id, site, province, profile = country_profile) {
 
     if (response$n_results == 0) {
       audit[[length(audit) + 1]] <- tibble(
-        site_id = site_id, sentinel_site = site,
+        site_id = site_id, name = site,
         rung = v$rung, rung_label = v$rung_label,
         address = v$address, components = v$components,
         api_status = response$status, n_results = 0L,
@@ -409,7 +445,7 @@ geocode_site <- function(site_id, site, province, profile = country_profile) {
       a <- assess_candidate(cand, site, expected, response$n_results, profile)
 
       audit[[length(audit) + 1]] <- tibble(
-        site_id = site_id, sentinel_site = site,
+        site_id = site_id, name = site,
         rung = v$rung, rung_label = v$rung_label,
         address = v$address, components = v$components,
         api_status = response$status, n_results = response$n_results,
@@ -438,6 +474,7 @@ geocode_site <- function(site_id, site, province, profile = country_profile) {
           matched_admin2    = cand$admin2,
           matched_locality  = cand$locality,
           location_type     = cand$location_type,
+          matched_types     = cand$types,
           partial_match     = cand$partial_match,
           place_id          = cand$place_id,
           n_results         = response$n_results,
@@ -458,7 +495,8 @@ geocode_site <- function(site_id, site, province, profile = country_profile) {
       query_address = NA_character_, query_components = NA_character_,
       matched_address = NA_character_, matched_admin1 = NA_character_,
       matched_admin2 = NA_character_, matched_locality = NA_character_,
-      location_type = NA_character_, partial_match = NA, place_id = NA_character_,
+      location_type = NA_character_, matched_types = NA_character_,
+      partial_match = NA, place_id = NA_character_,
       n_results = 0L, quality_flags = NA_character_, name_similarity = NA_real_
     )
   }
@@ -471,7 +509,11 @@ geocode_site <- function(site_id, site, province, profile = country_profile) {
 # ---------------------------------------------------------------------------
 
 #' Apply human-curated coordinates, which take precedence over any API result.
-apply_manual_overrides <- function(results, path = paths$overrides) {
+#'
+#' `id_col` names the key column in both `results` and the override file, so
+#' the DPS overrides can be keyed on `dps_id`.
+apply_manual_overrides <- function(results, path = paths$overrides,
+                                   id_col = "site_id") {
   if (!file.exists(path)) return(results)
 
   overrides <- read.csv(path, stringsAsFactors = FALSE)
@@ -489,8 +531,9 @@ apply_manual_overrides <- function(results, path = paths$overrides) {
 
   results |>
     left_join(
-      overrides |> select(site_id, ov_lat = latitude, ov_lon = longitude, ov_note = note),
-      by = "site_id"
+      overrides |> select(all_of(id_col), ov_lat = latitude, ov_lon = longitude,
+                          ov_note = note),
+      by = id_col
     ) |>
     mutate(
       overridden      = !is.na(ov_lat),

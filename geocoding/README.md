@@ -13,9 +13,14 @@ This file is just enough to get you running.
 ```
 input/     drc_sentinel_sites_26.csv   the 26 sites (province, sentinel_site)
            manual_overrides.csv        analyst-pinned coordinates
-pipeline/  config.R                    country profile, province list, thresholds
+           drc_dps_26.csv              the 26 DPS headquarters (dps, province, chef_lieu)
+           dps_manual_overrides.csv    analyst-pinned DPS coordinates
+           drc_dps_site_pairs.csv      DPS-site pairs (network, dps, sentinel_site)
+pipeline/  config.R                    country profile, province list, thresholds, query ladders
            geocode-functions.R         geocoder, quality gate, cache, overrides
-           drc-geocoding-workflow.qmd  the workflow document -- run this
+           pairs-functions.R           DPS-site pairing and straight-line distance
+           drc-geocoding-workflow.qmd  the sentinel site workflow -- run this first
+           drc-dps-site-pairs.qmd      the DPS geocoding and pairs workflow
            test-geocode-functions.R    test suite
 reference/ drc_provinces.csv           province boundaries for the PDF map
 output/    generated results (git-ignored)
@@ -104,11 +109,12 @@ needed.
 cd pipeline && Rscript test-geocode-functions.R
 ```
 
-Run it from `pipeline/`: it sources `config.R` and `geocode-functions.R` by
-relative path. 64 assertions, no API key and no network needed. Every Google
-response used is a verbatim fixture recorded from the live API, so the quality
-gate is exercised against what the API actually returns. Run these after any change to
-`config.R` or `geocode-functions.R`.
+Run it from `pipeline/`: it sources `config.R`, `geocode-functions.R` and
+`pairs-functions.R` by relative path. 110 assertions, no API key and no network
+needed. Every Google response used is a verbatim fixture recorded from the live
+API, so the quality gate is exercised against what the API actually returns. Run
+these after any change to `config.R`, `geocode-functions.R` or
+`pairs-functions.R`.
 
 ## Outputs
 
@@ -132,6 +138,42 @@ DRC-MIKALAYI,-6.0500,22.3167,pinned from field GPS
 Overrides take precedence over anything the API returned and are marked
 `geocode_status = "manual"`. `site_id` is derived from the site name
 (`DRC-VANGA`, `DRC-MWENE-DITU`), so overrides survive the input being re-sorted.
+
+## DPS–site pairs
+
+`pipeline/drc-dps-site-pairs.qmd` gives each sentinel site's DPS headquarters a
+coordinate, and pairs the two. It reads the sentinel workflow's output, so it
+must be rendered after that workflow:
+
+```bash
+quarto render pipeline/drc-dps-site-pairs.qmd --to html
+```
+
+Each DPS is geocoded through the same gate with its own ladder in `config.R`:
+the office (`Division Provinciale de la Sante <province>`) first, then the
+chef-lieu town. Every result is matched against the chef-lieu name, so a
+building in the wrong town is refused.
+
+The gate cannot tell the DPS office from another building in the right town,
+because the Geocoding API returns no establishment name. So **every building
+result goes to `drc_dps_review.csv`**, even at high confidence. To confirm or
+correct one, pin it in `input/dps_manual_overrides.csv`, keyed on `dps_id`
+(e.g. `DRC-DPS-KASAI-CENTRAL`).
+
+The chef-lieux in `drc_dps_26.csv` are the provincial capitals under the 2006
+Constitution. Check them against the DPS records before relying on them.
+
+| File | What it holds |
+|---|---|
+| `drc_dps_site_pairs.csv` | One row per pair: both coordinates, provenance, straight-line km, `complete`, `co_located` |
+| `drc_dps_geocoded.csv` | DPS coordinates, basis (establishment/settlement/manual) and review reason |
+| `drc_dps_candidates.csv` | Every DPS candidate at every rung |
+| `drc_dps_review.csv` | DPS to check by hand |
+| `drc_dps_site_pairs_map.html` | Interactive map of the pairs |
+
+To add a network (the 11-site 2003–2005 network, or the 2021 sites), add rows
+to `drc_dps_site_pairs.csv` with a new `network`. Any DPS or site the rows name
+must first be in its input. If one is missing, the build stops and names it.
 
 ## Judge the run by confidence, not success rate
 
