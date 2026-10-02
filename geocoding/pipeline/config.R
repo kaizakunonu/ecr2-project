@@ -34,7 +34,7 @@ dps_profile <- modifyList(country_profile, list(
 paths <- list(
   input         = "../input/drc_sentinel_sites_26.csv",
   overrides     = "../input/manual_overrides.csv",
-  dps_input     = "../input/drc_dps_26.csv",
+  dps_input     = "../input/drc_dps.csv",
   dps_overrides = "../input/dps_manual_overrides.csv",
   pairs         = "../input/drc_dps_site_pairs.csv",
   cache         = "../cache/google_geocode_cache.rds",
@@ -57,6 +57,24 @@ drc_provinces <- c(
   "Kwango", "Kwilu", "Lomami", "Lualaba", "Mai-Ndombe", "Maniema", "Mongala",
   "Nord-Kivu", "Nord-Ubangi", "Sankuru", "Sud-Kivu", "Sud-Ubangi",
   "Tanganyika", "Tshopo", "Tshuapa"
+)
+
+# The 11 provinces of 1988-2015 and the current provinces each became in the
+# July 2015 split (as in DPS_2015 of the 1988-2015 province shapefile). A pair
+# named under an old province must have its DPS seat and its site inside these
+# successors. Compared through normalise_name(), so "Kasaï Occidental" matches.
+provinces_pre2015 <- list(
+  "Bandundu"           = c("Kwango", "Kwilu", "Mai-Ndombe"),
+  "Bas-Congo"          = c("Kongo-Central"),
+  "Equateur"           = c("Equateur", "Mongala", "Nord-Ubangi", "Sud-Ubangi", "Tshuapa"),
+  "Kasai-Occidental"   = c("Kasai", "Kasai-Central"),
+  "Kasai-Oriental"     = c("Kasai-Oriental", "Lomami", "Sankuru"),
+  "Katanga"            = c("Haut-Katanga", "Haut-Lomami", "Lualaba", "Tanganyika"),
+  "Kinshasa"           = c("Kinshasa"),
+  "Maniema"            = c("Maniema"),
+  "Nord-Kivu"          = c("Nord-Kivu"),
+  "Province Orientale" = c("Bas-Uele", "Haut-Uele", "Ituri", "Tshopo"),
+  "Sud-Kivu"           = c("Sud-Kivu")
 )
 
 # ---------------------------------------------------------------------------

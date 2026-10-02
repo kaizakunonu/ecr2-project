@@ -1,27 +1,38 @@
-network,dps,sentinel_site
-2014,DPS Bas-Uele,Buta
-2014,DPS Equateur,Bolenge
-2014,DPS Haut-Katanga,Kapolowe
-2014,DPS Haut-Lomami,Kamina
-2014,DPS Haut-Uele,Pawa
-2014,DPS Ituri,Nyakunde
-2014,DPS Kasaï,Mweka
-2014,DPS Kasaï-Central,Mikalayi
-2014,DPS Kasaï-Oriental,Dibindi
-2014,DPS Kinshasa,Kingasani
-2014,DPS Kongo-Central,Kimpese
-2014,DPS Kwango,Kenge
-2014,DPS Kwilu,Vanga
-2014,DPS Lomami,Mwene-ditu
-2014,DPS Lualaba,Fungurume
-2014,DPS Maï-Ndombe,Inongo
-2014,DPS Maniema,Kalima
-2014,DPS Mongala,Lisala
-2014,DPS Nord-Kivu,Rutshuru
-2014,DPS Nord-Ubangi,Karawa
-2014,DPS Sankuru,Lodja
-2014,DPS Sud-Kivu,Katana
-2014,DPS Sud-Ubangi,Gemena
-2014,DPS Tanganyika,Kalemie
-2014,DPS Tshopo,Kabondo
-2014,DPS Tshuapa,Boende
+network,province,dps,sentinel_site
+2003_2005,Equateur,DPS Equateur,Bolenge
+2003_2005,Province Orientale,DPS Province Orientale,Kabondo
+2003_2005,Maniema,DPS Maniema,Kalima
+2003_2005,Sud-Kivu,DPS Sud-Kivu,Katana
+2003_2005,Katanga,DPS Katanga,Kapolowe
+2003_2005,Bas-Congo,DPS Bas-Congo,Kimpese
+2003_2005,Kinshasa,DPS Kinshasa,Kingasani
+2003_2005,Kasaï Occidental,DPS Kasaï Occidental,Mikalayi
+2003_2005,Kasaï Oriental,DPS Kasaï Oriental,Mwene-Ditu
+2003_2005,Nord-Kivu,DPS Nord-Kivu,Rutshuru
+2003_2005,Bandundu,DPS Bandundu,Vanga
+2014,Bas-Uele,DPS Bas-Uele,Buta
+2014,Equateur,DPS Equateur,Bolenge
+2014,Haut-Katanga,DPS Haut-Katanga,Kapolowe
+2014,Haut-Lomami,DPS Haut-Lomami,Kamina
+2014,Haut-Uele,DPS Haut-Uele,Pawa
+2014,Ituri,DPS Ituri,Nyakunde
+2014,Kasaï,DPS Kasaï,Mweka
+2014,Kasaï-Central,DPS Kasaï-Central,Mikalayi
+2014,Kasaï-Oriental,DPS Kasaï-Oriental,Dibindi
+2014,Kinshasa,DPS Kinshasa,Kingasani
+2014,Kongo-Central,DPS Kongo-Central,Kimpese
+2014,Kwango,DPS Kwango,Kenge
+2014,Kwilu,DPS Kwilu,Vanga
+2014,Lomami,DPS Lomami,Mwene-ditu
+2014,Lualaba,DPS Lualaba,Fungurume
+2014,Maï-Ndombe,DPS Maï-Ndombe,Inongo
+2014,Maniema,DPS Maniema,Kalima
+2014,Mongala,DPS Mongala,Lisala
+2014,Nord-Kivu,DPS Nord-Kivu,Rutshuru
+2014,Nord-Ubangi,DPS Nord-Ubangi,Karawa
+2014,Sankuru,DPS Sankuru,Lodja
+2014,Sud-Kivu,DPS Sud-Kivu,Katana
+2014,Sud-Ubangi,DPS Sud-Ubangi,Gemena
+2014,Tanganyika,DPS Tanganyika,Kalemie
+2014,Tshopo,DPS Tshopo,Kabondo
+2014,Tshuapa,DPS Tshuapa,Boende

@@ -55,6 +55,19 @@ ok("rejection names the offenders",
    grepl("Bandundu", attr(try(validate_provinces(bad), silent = TRUE), "condition")$message))
 
 # ---------------------------------------------------------------------------
+section("The 2015 province split")
+successors <- unlist(provinces_pre2015, use.names = FALSE)
+ok("there are 11 pre-2015 provinces",     length(provinces_pre2015) == 11)
+ok("the split covers all 26 provinces",
+   setequal(normalise_name(successors), normalise_name(drc_provinces)))
+ok("...each exactly once",                length(successors) == 26 && !anyDuplicated(successors))
+ok("Kasaï Oriental became Lomami, among others",
+   "Lomami" %in% successor_provinces("Kasaï Oriental"))
+ok("Bas-Congo was only renamed",          identical(successor_provinces("Bas-Congo"), "Kongo-Central"))
+ok("a current province maps to itself",   identical(successor_provinces("Lomami"), "Lomami"))
+ok("an unknown name maps to NA",          is.na(successor_provinces("Atlantis")))
+
+# ---------------------------------------------------------------------------
 section("Site identifiers")
 with_ids <- ensure_site_id(sites)
 ok("site_id is derived",                  all(!is.na(with_ids$site_id)))
@@ -71,8 +84,20 @@ ok("duplicate site names are refused",
 
 dps_in <- read.csv(paths$dps_input, stringsAsFactors = FALSE)
 dps_ids <- ensure_site_id(dps_in, dps_profile)$dps_id
-ok("DPS input has 26 rows",               nrow(dps_in) == 26)
-ok("DPS input uses current provinces",    !is.null(validate_provinces(dps_in)))
+ok("DPS registry has 31 seats",           nrow(dps_in) == 31)
+ok("it holds every current province's DPS",
+   all(normalise_name(paste("DPS", drc_provinces)) %in% normalise_name(dps_in$dps)))
+ok("DPS seats use current provinces",     !is.null(validate_provinces(dps_in)))
+ok("every seat lies in what its DPS's province became",
+   all(map2_lgl(dps_in$province, sub("^DPS ", "", dps_in$dps),
+                \(p, n) normalise_name(p) %in% normalise_name(successor_provinces(n)))))
+current_dps <- normalise_name(paste("DPS", drc_provinces))
+ok("DPS registry lists the 5 pre-2015 seats first",
+   !any(normalise_name(dps_in$dps[1:5]) %in% current_dps) &&
+     all(normalise_name(dps_in$dps[6:31]) %in% current_dps))
+ok("DPS Kasaï Oriental resolves to the DPS Kasaï-Oriental seat",
+   make_id("DPS Kasaï Oriental") == make_id("DPS Kasaï-Oriental") &&
+     make_id("DPS Kasaï Oriental") %in% dps_ids)
 ok("dps_id is derived from the DPS name", "DRC-DPS-KASAI-CENTRAL" %in% dps_ids)
 ok("dps_id folds accents",                "DRC-DPS-MAI-NDOMBE" %in% dps_ids)
 ok("dps_ids never collide with site_ids",
@@ -302,7 +327,8 @@ reg_sites <- tibble(site_id = c("DRC-BUTA", "DRC-MIKALAYI"),
                     province = c("Bas-Uele", "Kasaï-Central"),
                     latitude = c(2.8045317, NA), longitude = c(24.7499112, NA),
                     confidence = c("high", "failed"))
-pair_in <- tibble(network = "2014", dps = c("DPS Bas-Uele", "DPS Kasai-Central"),
+pair_in <- tibble(network = "2014", province = c("Bas-Uele", "Kasaï-Central"),
+                  dps = c("DPS Bas-Uele", "DPS Kasai-Central"),
                   sentinel_site = c("Buta", "Mikalayi"))
 pp <- build_pairs(pair_in, reg_dps, reg_sites)
 ok("pairs resolve names to both ids",     identical(pp$dps_id, reg_dps$dps_id))
@@ -311,8 +337,8 @@ ok("a site without coordinates is incomplete", !pp$complete[2] && !pp$co_located
 ok("an incomplete pair is kept, not dropped", nrow(pp) == 2)
 ok("matching provinces raise no mismatch", !any(pp$province_mismatch))
 ok("an unknown site stops the build",
-   inherits(try(build_pairs(tibble(network = "2021", dps = "DPS Bas-Uele",
-                                   sentinel_site = "Bondo"),
+   inherits(try(build_pairs(tibble(network = "2021", province = "Bas-Uele",
+                                   dps = "DPS Bas-Uele", sentinel_site = "Bondo"),
                             reg_dps, reg_sites), silent = TRUE), "try-error"))
 ok("a site paired twice in a network stops the build",
    inherits(try(build_pairs(bind_rows(pair_in, pair_in), reg_dps, reg_sites),
@@ -321,8 +347,51 @@ ok("the same pair in two networks is fine",
    nrow(build_pairs(bind_rows(pair_in, mutate(pair_in, network = "2003_2005")),
                     reg_dps, reg_sites)) == 4)
 
+# Chronological order whatever the input order: 2014 rows given first, and the
+# 2003_2005 rows in reverse, which must survive.
+mixed <- bind_rows(pair_in, mutate(pair_in[2:1, ], network = "2003_2005"))
+ordered <- build_pairs(mixed, reg_dps, reg_sites)
+ok("networks come out in chronological order",
+   identical(ordered$network, c("2003_2005", "2003_2005", "2014", "2014")))
+ok("rows keep their input order within a network",
+   identical(ordered$sentinel_site[1:2], c("Mikalayi", "Buta")))
+ok("a network name without a leading year stops the build",
+   inherits(try(build_pairs(mutate(pair_in, network = "baseline"), reg_dps, reg_sites),
+                silent = TRUE), "try-error"))
+
+# Mwene-Ditu in 2003-2005: its DPS seat (Mbuji-Mayi) stayed in Kasaï-Oriental
+# while the site went to Lomami in the 2015 split.
+reg_dps2 <- bind_rows(reg_dps, tibble(
+  dps_id = "DRC-DPS-KASAI-ORIENTAL", dps = "DPS Kasaï-Oriental", province = "Kasaï-Oriental",
+  chef_lieu = "Mbuji-Mayi", latitude = -6.1307, longitude = 23.5967,
+  confidence = "high", point_basis = "settlement"))
+reg_sites2 <- bind_rows(reg_sites, tibble(
+  site_id = "DRC-MWENE-DITU", sentinel_site = "Mwene-ditu", province = "Lomami",
+  latitude = -7.0093377, longitude = 23.4504358, confidence = "high"))
+mwene <- build_pairs(tibble(network = "2003_2005", province = "Kasaï Oriental",
+                            dps = "DPS Kasaï Oriental", sentinel_site = "Mwene-Ditu"),
+                     reg_dps2, reg_sites2)
+ok("an old-province pair across the 2015 split is accepted", nrow(mwene) == 1 && mwene$complete)
+ok("...flagged as a province mismatch",   mwene$province_mismatch)
+ok("...and keeps its old province name",  mwene$network_province == "Kasaï Oriental")
+ok("...and its old DPS name, not the shared seat's", mwene$dps == "DPS Kasaï Oriental")
+
+ok("an unrecognised province stops the build",
+   inherits(try(build_pairs(mutate(pair_in, province = "Atlantis"), reg_dps, reg_sites),
+                silent = TRUE), "try-error"))
+outside <- try(build_pairs(tibble(network = "2003_2005", province = "Bandundu",
+                                  dps = "DPS Bas-Uele", sentinel_site = "Buta"),
+                           reg_dps, reg_sites), silent = TRUE)
+ok("a pair outside its old province stops the build", inherits(outside, "try-error"))
+ok("...naming the pair",                  grepl("Bandundu: DPS Bas-Uele", outside))
+
 pairs_in <- read.csv(paths$pairs, stringsAsFactors = FALSE)
 ok("pairs input has 26 rows for 2014",    sum(pairs_in$network == "2014") == 26)
+ok("pairs input has 11 rows for 2003_2005", sum(pairs_in$network == "2003_2005") == 11)
+ok("pairs input lists 2003_2005 first",
+   pairs_in$network[1] == "2003_2005" && !is.unsorted(pairs_in$network))
+ok("every pair's province is recognised",
+   !anyNA(unlist(lapply(pairs_in$province, successor_provinces))))
 ok("every pair's DPS is in the registry",
    all(make_id(pairs_in$dps) %in% dps_ids))
 ok("every pair's site is in the input",

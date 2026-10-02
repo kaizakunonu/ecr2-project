@@ -38,8 +38,8 @@ The work has two point sets and one pairs table:
 | Piece | Source | Built by |
 |-------|--------|----------|
 | Sentinel sites | `../output/drc_sentinel_sites_geocoded.csv` | `drc-geocoding-workflow.qmd` |
-| DPS headquarters | `../input/drc_dps_26.csv` | this document |
-| Pairs | `../input/drc_dps_site_pairs.csv` (`network, dps, sentinel_site`) | this document |
+| DPS seats | `../input/drc_dps.csv` | this document |
+| Pairs | `../input/drc_dps_site_pairs.csv` (`network, province, dps, sentinel_site`) | this document |
 
 Sentinel sites are **not** geocoded again here. This document uses the
 reviewed output of the sentinel workflow, including its manual overrides.
@@ -98,11 +98,17 @@ cat("Google Maps API key detected.\n")
 
 ## Inputs
 
-### DPS headquarters
+### DPS seats
 
-`province` is the post-2015 province that the DPS seat lies in. The gate
-checks it. `chef_lieu` is the town the office is in, and it is the name that
-every candidate is matched against.
+The registry holds DPS seats. `province` is the current province the seat lies
+in, which the gate checks. `chef_lieu` is the town the office is in, and it is
+the name every candidate is matched against.
+
+It lists the 26 current DPS and 5 pre-2015 DPS whose provinces no longer exist
+(Bandundu, Bas-Congo, Kasaï Occidental, Katanga and Province Orientale). Every
+pre-2015 seat is also a current chef-lieu. The other six pre-2015 DPS
+(Équateur, Kasaï Oriental, Kinshasa, Maniema, Nord-Kivu and Sud-Kivu) have the
+same name and seat as a current DPS, so their pairs use that DPS's row.
 
 ```{r}
 #| label: dps-input
@@ -117,10 +123,15 @@ cat("DPS headquarters:", nrow(dps), "| provinces:", length(unique(dps$province))
 
 dps |>
   select(dps_id, dps, province, chef_lieu) |>
-  kable(caption = "DPS headquarters to geocode")
+  kable(caption = "DPS seats to geocode")
 ```
 
 ### Pairs and sentinel sites
+
+Each pair records its `province` as the network named it. The 2003–2005
+pairs therefore use the 1988–2015 provinces. When the pairs are built, both
+ends of a pair must lie in what its province became in the July 2015 split
+(`provinces_pre2015` in `config.R`). If either end does not, the build stops.
 
 ```{r}
 #| label: pairs-input
@@ -289,6 +300,70 @@ od |>
   kable(caption = "Pairs by network")
 ```
 
+### Province changes
+
+This section covers networks named under the 1988–2015 provinces. It shows how
+each pair's province maps onto today's provinces. When a province was split in
+2015, the site and its former DPS seat usually stayed in the same new province.
+Where they did not, the pair is flagged `province_mismatch`. The site now
+belongs to a different DPS, which a later network pairs it with.
+
+```{r}
+#| label: province-changes
+#| eval: true
+
+old_networks <- od |>
+  group_by(network) |>
+  filter(any(!normalise_name(network_province) %in% normalise_name(drc_provinces))) |>
+  ungroup()
+
+if (nrow(old_networks) > 0) {
+  old_networks |>
+    mutate(
+      n_successors = map_int(network_province, \(p) length(successor_provinces(p))),
+      change = case_when(
+        n_successors == 1 &
+          normalise_name(network_province) == normalise_name(site_province) ~ "unchanged",
+        n_successors == 1                                                   ~ "renamed",
+        !province_mismatch ~ "split; seat and site in the same new province",
+        TRUE               ~ "split; seat and site now in different provinces"
+      )
+    ) |>
+    transmute(network, then = network_province, dps, seat = chef_lieu,
+              seat_now = dps_province, sentinel_site, site_now = site_province,
+              change) |>
+    kable(caption = "Pre-2015 pairs on today's provinces")
+} else {
+  cat("No network uses pre-2015 province names.\n")
+}
+```
+
+### Network comparison
+
+The table below shows sites paired in more than one network, with each
+network's DPS seat and the straight-line distance between them.
+
+```{r}
+#| label: network-comparison
+#| eval: true
+
+shared <- od |>
+  group_by(site_id) |>
+  filter(n_distinct(network) > 1) |>
+  ungroup()
+
+if (nrow(shared) > 0) {
+  shared |>
+    transmute(sentinel_site, network, seat = chef_lieu,
+              km = round(straight_line_km, 1)) |>
+    pivot_wider(names_from = network, values_from = c(seat, km),
+                names_glue = "{.value}_{network}", names_sort = TRUE) |>
+    kable(caption = "Sites paired in more than one network")
+} else {
+  cat("No site is paired in more than one network.\n")
+}
+```
+
 ### Incomplete pairs
 
 ```{r}
@@ -330,7 +405,7 @@ if (nrow(co_loc) > 0) {
 
 od |>
   transmute(
-    network, dps, sentinel_site,
+    network, province = network_province, dps, sentinel_site,
     dps_lat = round(dps_lat, 4), dps_lon = round(dps_lon, 4),
     site_lat = round(site_lat, 4), site_lon = round(site_lon, 4),
     km = round(straight_line_km, 1), dps_basis
@@ -347,10 +422,23 @@ od |>
 
 lines <- od |> filter(complete)
 
+# Several DPS can share a seat (DPS Kwilu and the pre-2015 DPS Bandundu are
+# both in Bandundu), so draw one marker per seat with every DPS in its label.
+seats <- dps_final |>
+  filter(!is.na(latitude)) |>
+  group_by(latitude, longitude, chef_lieu) |>
+  summarise(dps = paste(dps, collapse = " / "),
+            point_basis = first(point_basis), confidence = first(confidence),
+            matched_address = first(matched_address), .groups = "drop")
+
+networks  <- sort(unique(lines$network))   # chronological: names start with a year
+net_cols  <- setNames(rep_len(c("#4d4d4d", "#e08214", "#542788"), length(networks)),
+                      networks)
+
 map <- leaflet() |>
   addTiles() |>
   addCircleMarkers(
-    data = dps_final |> filter(!is.na(latitude)),
+    data = seats,
     lng = ~longitude, lat = ~latitude, group = "DPS",
     color = "#b2182b", radius = 7, fillOpacity = 0.8,
     label = ~dps,
@@ -374,13 +462,15 @@ for (i in seq_len(nrow(lines))) {
   map <- map |>
     addPolylines(lng = c(lines$dps_lon[i], lines$site_lon[i]),
                  lat = c(lines$dps_lat[i], lines$site_lat[i]),
-                 color = "#4d4d4d", weight = 2, opacity = 0.7, group = "Pairs",
-                 label = paste0(lines$dps[i], " → ", lines$sentinel_site[i], ": ",
+                 color = net_cols[[lines$network[i]]], weight = 2, opacity = 0.7,
+                 group = paste("Pairs", lines$network[i]),
+                 label = paste0(lines$network[i], ": ", lines$dps[i], " → ",
+                                lines$sentinel_site[i], ", ",
                                 round(lines$straight_line_km[i], 1), " km"))
 }
 
 map <- map |>
-  addLayersControl(overlayGroups = c("DPS", "Sentinel sites", "Pairs"),
+  addLayersControl(overlayGroups = c("DPS", "Sentinel sites", paste("Pairs", networks)),
                    options = layersControlOptions(collapsed = FALSE))
 
 # Build in a temp directory: saveWidget() leaves a scratch "*_files" folder
@@ -397,11 +487,9 @@ map
 A network is a set of rows in `../input/drc_dps_site_pairs.csv`, tagged with
 its `network`. Both of its points must be in a registry first.
 
-- **2003–2005 (11 sites).** All 11 original sites are already among the 26.
-  Add the 11 pre-2015 DPS to `drc_dps_26.csv`, for example
-  `DPS Bandundu, Kwilu, Bandundu`. The DPS name keeps the old province, and
-  `province` gives the current province its seat lies in. Every pre-2015 DPS
-  seat is also a current chef-lieu. Then add the 11 pair rows.
+- **2014 (26 sites)** and **2003–2005 (11 sites)** are paired. All 11 original
+  sites are among the 26. Their pairs name the 1988–2015 provinces, and
+  `provinces_pre2015` maps those onto today's provinces.
 - **2021 (25 sites).** Add the new sites to the sentinel input and re-render
   `drc-geocoding-workflow.qmd`. The DPS are the same 26. Then add the pair rows.
   If a pair names a site that has not been geocoded, the build stops and lists
@@ -417,5 +505,5 @@ its `network`. Both of its points must be in a registry first.
 | `drc_dps_review.csv` | DPS to check by hand |
 | `drc_dps_site_pairs_map.html` | Interactive map of the pairs |
 
-All outputs are git-ignored. Google's terms allow only limited caching of
-geocoding results.
+Outputs are git-ignored. Commit a deliverable deliberately, with `git add -f`.
+Google's terms allow only limited caching of geocoding results.
