@@ -41,7 +41,7 @@ ok("similarity: NA scores 0",             name_similarity("Vanga", NA) == 0)
 
 # ---------------------------------------------------------------------------
 section("Province validation")
-sites <- read.csv(paths$input, stringsAsFactors = FALSE)
+sites <- read.csv(paths$input[1], stringsAsFactors = FALSE)   # the 26-site input
 
 ok("input has 26 rows",                   nrow(sites) == 26)
 ok("input has 26 distinct provinces",     length(unique(sites$province)) == 26)
@@ -103,6 +103,17 @@ ok("dps_id folds accents",                "DRC-DPS-MAI-NDOMBE" %in% dps_ids)
 ok("dps_ids never collide with site_ids",
    length(intersect(dps_ids, with_ids$site_id)) == 0)
 ok("make_id agrees with ensure_site_id",  identical(make_id(sites$sentinel_site), with_ids$site_id))
+
+sites_2021 <- read.csv(paths$input[2], stringsAsFactors = FALSE)
+ok("2021 input has 25 rows",              nrow(sites_2021) == 25)
+ok("...in 25 distinct provinces",         length(unique(normalise_name(sites_2021$province))) == 25)
+ok("...all current province names",       !is.null(validate_provinces(sites_2021)))
+ok("...none clashing with a 2014 site id",
+   length(intersect(make_id(sites_2021$sentinel_site), with_ids$site_id)) == 0)
+
+all_sites <- ensure_site_id(read_sites())
+ok("read_sites joins every input",        nrow(all_sites) == 51)
+ok("...into 51 unique site ids",          !anyDuplicated(all_sites$site_id))
 
 # ---------------------------------------------------------------------------
 section("Query ladder")
@@ -266,6 +277,39 @@ a_kan <- assess_candidate(kananga, "Kananga", "Kasaï-Central", 1L)
 ok("the chef-lieu fallback reaches HIGH", a_kan$accepted && confidence_tier(a_kan, 2) == "high")
 
 # ---------------------------------------------------------------------------
+section("2021 sites: regressions from real API responses")
+
+# Maluku 1, rung 1: a street called Maluku in central Kinshasa, some 70 km from
+# Maluku itself. Right province, so only the name check can refuse it.
+maluku <- candidate("1 Maluku, Kinshasa, République démocratique du Congo",
+                    "RANGE_INTERPOLATED", "street_address", TRUE, "Kinshasa", "Kinshasa",
+                    lat = -4.3561391, lon = 15.3284166)
+a_mal <- assess_candidate(maluku, "Maluku 1", "Kinshasa", n_results = 2L)
+ok("a same-named street in the right province is REJECTED", !a_mal$accepted)
+ok("...on the name",                      grepl("unrelated", a_mal$reject_reason))
+ok("...and is not a settlement",          point_basis(maluku$types) == "other")
+
+# Nyemba, rung 2: Google's "Niemba", probably the same place spelled another
+# way. Scored against the whole address it falls below the floor, so it is
+# refused and has to be pinned by hand -- the gate does not guess at spellings.
+niemba <- candidate("Niemba, République démocratique du Congo", "APPROXIMATE",
+                    "establishment|natural_feature", FALSE, "Tanganyika",
+                    lat = -5.9497307, lon = 28.4309994)
+ok("a spelling variant without a locality is REJECTED",
+   !assess_candidate(niemba, "Nyemba", "Tanganyika", 1L)$accepted)
+ok("...though the bare names are close",
+   name_similarity("Nyemba", "Niemba") > gate$similarity_floor)
+
+# Wanierukula, rung 1: Google spells it "Waine-Rukula". The locality carries the
+# name, so it clears the floor but is held at low confidence for review.
+waine <- candidate("Waine-Rukula, République démocratique du Congo", "APPROXIMATE",
+                   "locality|political", TRUE, "Tshopo", "Waine-Rukula",
+                   lat = 0.1983232, lon = 25.5266578)
+a_wai <- assess_candidate(waine, "Wanierukula", "Tshopo", 1L)
+ok("a transposed spelling is accepted",   a_wai$accepted)
+ok("...but only at LOW confidence",       confidence_tier(a_wai, 1) == "low")
+
+# ---------------------------------------------------------------------------
 section("Response cache")
 tmp <- tempfile(fileext = ".rds")
 cache_load(tmp)
@@ -388,14 +432,15 @@ ok("...naming the pair",                  grepl("Bandundu: DPS Bas-Uele", outsid
 pairs_in <- read.csv(paths$pairs, stringsAsFactors = FALSE)
 ok("pairs input has 26 rows for 2014",    sum(pairs_in$network == "2014") == 26)
 ok("pairs input has 11 rows for 2003_2005", sum(pairs_in$network == "2003_2005") == 11)
+ok("pairs input has 25 rows for 2021_expansion", sum(pairs_in$network == "2021_expansion") == 25)
 ok("pairs input lists 2003_2005 first",
    pairs_in$network[1] == "2003_2005" && !is.unsorted(pairs_in$network))
 ok("every pair's province is recognised",
    !anyNA(unlist(lapply(pairs_in$province, successor_provinces))))
 ok("every pair's DPS is in the registry",
    all(make_id(pairs_in$dps) %in% dps_ids))
-ok("every pair's site is in the input",
-   all(make_id(pairs_in$sentinel_site) %in% with_ids$site_id))
+ok("every pair's site is in the inputs",
+   all(make_id(pairs_in$sentinel_site) %in% all_sites$site_id))
 
 # ---------------------------------------------------------------------------
 cat("\n=====================================\n")

@@ -1,8 +1,9 @@
 # DRC Sentinel Site Geocoding
 
-Derives latitude and longitude for the **26 sentinel sites** of the DRC
-surveillance network — one per province — from each site's name and province,
-using the Google Maps Geocoding API.
+Derives latitude and longitude for the **sentinel sites** of the DRC
+surveillance network from each site's name and province, using the Google Maps
+Geocoding API. It covers the 26 sites of the 2014 network (one per province)
+and the 25 selected in the 2021 expansion.
 
 The full method, quality rules and troubleshooting live in
 [`pipeline/drc-geocoding-workflow.qmd`](pipeline/drc-geocoding-workflow.qmd).
@@ -11,7 +12,8 @@ This file is just enough to get you running.
 ## Layout
 
 ```
-input/     drc_sentinel_sites_26.csv   the 26 sites (province, sentinel_site)
+input/     drc_sentinel_sites_26.csv   the 26 sites of 2014 (province, sentinel_site)
+           drc_sentinel_sites_2021_expansion.csv  the 25 sites selected in 2021
            manual_overrides.csv        analyst-pinned coordinates
            drc_dps.csv                 the 31 DPS seats: 26 current, 5 pre-2015 (dps, province, chef_lieu)
            dps_manual_overrides.csv    analyst-pinned DPS coordinates
@@ -110,7 +112,7 @@ cd pipeline && Rscript test-geocode-functions.R
 ```
 
 Run it from `pipeline/`: it sources `config.R`, `geocode-functions.R` and
-`pairs-functions.R` by relative path. 134 assertions, no API key and no network
+`pairs-functions.R` by relative path. 148 assertions, no API key and no network
 needed. Every Google response used is a verbatim fixture recorded from the live
 API, so the quality gate is exercised against what the API actually returns. Run
 these after any change to `config.R`, `geocode-functions.R` or
@@ -163,8 +165,20 @@ correct one, pin it in `input/dps_manual_overrides.csv`, keyed on `dps_id`
 The chef-lieux in `drc_dps.csv` are the provincial capitals under the 2006
 Constitution. Check them against the DPS records before relying on them.
 
-Two networks are paired: 2014 (26 sites) and 2003–2005 (the original 11
-sites). The 2003–2005 pairs keep their 1988–2015 province names, for example
+Three networks are paired, and kept separate so that accessibility can be
+compared across them:
+
+| Network | Pairs | What it is |
+|---|---|---|
+| `2003_2005` | 11 | The original 11 sites |
+| `2014` | 26 | One site per current province |
+| `2021_expansion` | 25 | The sites selected in 2021 |
+
+Each network holds exactly what its workbook sheet lists. The 2021 expansion
+adds to 2014, so the full 2021 configuration is `2014` plus `2021_expansion`.
+Kasaï-Central's 2021 site is still to come.
+
+The 2003–2005 pairs keep their 1988–2015 province names, for example
 `Kasaï Oriental` and `DPS Kasaï Oriental`. `provinces_pre2015` in `config.R`
 maps each old province onto the current provinces it was split into in 2015.
 The build stops if either end of a pair falls outside them.
@@ -187,12 +201,18 @@ The pairs file flags it `province_mismatch`.
 | `drc_dps_review.csv` | DPS to check by hand |
 | `drc_dps_site_pairs_map.html` | Interactive map of the pairs |
 
-To add a network (e.g. the 2021 sites), add rows to `drc_dps_site_pairs.csv`
-with a new `network`. Any DPS or site the rows name must first be in its input.
-If one is missing, the build stops and names it.
+To add a network:
+
+1. Put its new sites in their own input file and add that file to
+   `paths$input` in `config.R`.
+2. Re-render the sentinel workflow.
+3. Add its rows to `drc_dps_site_pairs.csv` with a new `network`.
+
+Any DPS or site the rows name must first be in its input. If one is missing,
+the build stops and names it.
 
 A network's name must start with the year it began, e.g. `2003_2005`, `2014`,
-`2021`. The build sorts networks by name, so the pairs output is always
+`2021_expansion`. The build sorts networks by name, so the pairs output is always
 chronological, with 2003_2005 first. Rows keep their input order (the
 workbook's) within a network. The inputs follow the same order, and the DPS
 registry lists its 5 pre-2015 seats first.

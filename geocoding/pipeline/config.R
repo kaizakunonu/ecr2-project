@@ -32,7 +32,10 @@ dps_profile <- modifyList(country_profile, list(
 
 # File locations, relative to the pipeline/ directory
 paths <- list(
-  input         = "../input/drc_sentinel_sites_26.csv",
+  # Sentinel site inputs, read together by read_sites() as one registry: the
+  # 26 sites from extract_sentinel_sites_26.py and the 25 selected in 2021.
+  input         = c("../input/drc_sentinel_sites_26.csv",
+                    "../input/drc_sentinel_sites_2021_expansion.csv"),
   overrides     = "../input/manual_overrides.csv",
   dps_input     = "../input/drc_dps.csv",
   dps_overrides = "../input/dps_manual_overrides.csv",

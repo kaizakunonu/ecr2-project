@@ -48,7 +48,7 @@ execute:
 
 ## Executive Summary
 
-This document geocodes the **26 sentinel sites** of the DRC surveillance network — one per province — deriving latitude and longitude for each `sentinel_site` using its `province` as a constraint.
+This document geocodes the **sentinel sites** of the DRC surveillance network: the 26 sites of the 2014 network, one per province, and the 25 selected in the 2021 expansion. It derives latitude and longitude for each `sentinel_site`, using its `province` as a constraint.
 
 It produces coordinates with full provenance for every site, a review queue of anything that could not be trusted outright, and an interactive map for visual verification.
 
@@ -269,7 +269,7 @@ should be pinned by hand rather than guessed.
 #| label: data-preparation
 #| eval: true
 
-sites <- read.csv(paths$input, stringsAsFactors = FALSE) |>
+sites <- read_sites() |>
   ensure_site_id() |>
   distinct(site_id, .keep_all = TRUE)
 
@@ -569,11 +569,20 @@ agreement |>
 
 ### Spot Check
 
-With 26 sites, every point can and should be verified by eye. Each row links to
-the exact coordinate on Google Maps and OpenStreetMap. Pay closest attention to
-the urban health zones — Kabondo (a commune of Kisangani), Dibindi (Mbuji-Mayi)
-and Kingasani (Kinshasa) — which are not standalone settlements and are the most
-likely to resolve to something plausible but wrong.
+Every point can and should be verified by eye. Each row links to the exact
+coordinate on Google Maps and OpenStreetMap.
+
+Pay closest attention to the urban health zones, which are not standalone
+settlements and are the most likely to resolve to something plausible but
+wrong:
+
+- Kabondo, a commune of Kisangani
+- Dibindi, in Mbuji-Mayi
+- Kingasani and Maluku 1, both in Kinshasa
+- Bandundu, which is also the name of a former province
+
+Very short names such as Aba need the same care. Any address containing the
+name passes the name check.
 
 ```{r}
 #| label: spot-check

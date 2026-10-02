@@ -67,6 +67,16 @@ validate_provinces <- function(sites, provinces = drc_provinces,
   invisible(found)
 }
 
+#' Read every sentinel site input into one table.
+#'
+#' Each network's new sites live in their own file; ensure_site_id() then
+#' refuses a name that appears in more than one.
+read_sites <- function(files = paths$input) {
+  files |>
+    map(\(f) read.csv(f, stringsAsFactors = FALSE)) |>
+    list_rbind()
+}
+
 #' Ensure every row carries a stable identifier.
 #'
 #' The 26-province input has no `site_id`, yet it is the key that joins results

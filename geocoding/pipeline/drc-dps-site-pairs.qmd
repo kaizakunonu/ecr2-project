@@ -44,6 +44,20 @@ The work has two point sets and one pairs table:
 Sentinel sites are **not** geocoded again here. This document uses the
 reviewed output of the sentinel workflow, including its manual overrides.
 
+### Networks
+
+The networks are kept separate, so that accessibility can be compared across
+them. Each network holds exactly the pairs its workbook sheet lists:
+
+| Network | Pairs | What it is |
+|---------|-------|------------|
+| `2003_2005` | 11 | The original sites, named under the 1988–2015 provinces |
+| `2014` | 26 | One site per current province |
+| `2021_expansion` | 25 | The sites selected in 2021. Kasaï-Central's is still to come |
+
+The 2021 expansion adds to the 2014 network. If you need the full 2021
+configuration, combine `2014` and `2021_expansion`.
+
 ### How the DPS points are found
 
 Each DPS is geocoded with the same quality gate as the sentinel sites, through
@@ -487,13 +501,28 @@ map
 A network is a set of rows in `../input/drc_dps_site_pairs.csv`, tagged with
 its `network`. Both of its points must be in a registry first.
 
-- **2014 (26 sites)** and **2003–2005 (11 sites)** are paired. All 11 original
-  sites are among the 26. Their pairs name the 1988–2015 provinces, and
-  `provinces_pre2015` maps those onto today's provinces.
-- **2021 (25 sites).** Add the new sites to the sentinel input and re-render
-  `drc-geocoding-workflow.qmd`. The DPS are the same 26. Then add the pair rows.
-  If a pair names a site that has not been geocoded, the build stops and lists
-  it.
+All three networks are paired:
+
+- **2003–2005 and 2014.** All 11 original sites are among the 26. The 2003–2005
+  pairs name the 1988–2015 provinces, and `provinces_pre2015` maps those onto
+  today's provinces.
+- **2021_expansion.** Its 25 sites are in their own input,
+  `../input/drc_sentinel_sites_2021_expansion.csv`, which the sentinel workflow
+  geocodes along with the 26.
+
+When Kasaï-Central's 2021 site is chosen:
+
+1. Add a row to `drc_sentinel_sites_2021_expansion.csv`.
+2. Re-render `drc-geocoding-workflow.qmd`.
+3. Add the pair row: `2021_expansion, Kasaï-Central, DPS Kasaï-Central, <site>`.
+
+A later network works the same way:
+
+1. Put its new sites in a new input file and add that file to `paths$input` in
+   `config.R`.
+2. Add its pair rows under a name that starts with its year.
+
+If a pair names a site that has not been geocoded, the build stops and lists it.
 
 ## Output Files
 

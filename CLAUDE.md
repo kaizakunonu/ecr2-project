@@ -32,7 +32,7 @@ The root `.Rprofile` adds `.uvr/library` to the library path only when R starts 
 ```bash
 source .uvr/activate     # once per shell, from the repo root
 
-# Geocoding tests: 134 assertions, no network or API key needed.
+# Geocoding tests: 148 assertions, no network or API key needed.
 # Must run from pipeline/, because the script sources config.R by relative path.
 cd geocoding/pipeline && Rscript test-geocode-functions.R
 
@@ -62,7 +62,9 @@ The extractor combines two blocks from the workbook's `Metadata` sheet: the orig
 
 Its output is deterministic: rows are sorted by accent-folded province, then site. A regenerated input that differs from the committed CSV means the workbook or the crosswalk changed.
 
-A second flow pairs each site with its DPS (Division Provinciale de la Santé) headquarters. It uses `geocoding/input/drc_dps.csv` (DPS seats: dps, province, chef-lieu) and `geocoding/input/drc_dps_site_pairs.csv` (`network, province, dps, sentinel_site`). It reads the sentinel output, and `drc-dps-site-pairs.qmd` writes `geocoding/output/drc_dps_site_pairs.csv`. The pairs were checked against the `2014` and `2003_2005` sheets of `30Sep/DRC_DPS.xlsx`, which is untracked. The 2021 network (25 sites) is not yet paired.
+The sentinel workflow reads every file in `paths$input` through `read_sites()`, as one registry of 51 sites. The second file is `geocoding/input/drc_sentinel_sites_2021_expansion.csv`: the 25 sites selected in 2021, taken from the `2021_expansion` sheet of `30Sep/DRC_DPS.xlsx` in sheet order. Kasaï-Central has no 2021 site yet. Never append to `drc_sentinel_sites_26.csv`, which the extractor owns; a new network gets its own input file.
+
+A second flow pairs each site with its DPS (Division Provinciale de la Santé) headquarters. It uses `geocoding/input/drc_dps.csv` (DPS seats: dps, province, chef-lieu) and `geocoding/input/drc_dps_site_pairs.csv` (`network, province, dps, sentinel_site`). It reads the sentinel output, and `drc-dps-site-pairs.qmd` writes `geocoding/output/drc_dps_site_pairs.csv`. The pairs were checked against the `2003_2005`, `2014` and `2021_expansion` sheets of `30Sep/DRC_DPS.xlsx`, which is untracked. The three networks are kept separate, because downstream analysts compare accessibility across them. Each holds exactly what its sheet lists, so the full 2021 configuration is `2014` plus `2021_expansion`.
 
 The 2003–2005 pairs keep their pre-2015 province and DPS names. `provinces_pre2015` in `config.R` records the July 2015 split, which matches `DPS_2015` in `30Sep/RDC_11_provinces_1988_2015_shapefile.zip`. `build_pairs` stops if a pair's DPS seat or site lies outside what its province became. Network names must start with the year the network began. `build_pairs` sorts by network name, which gives chronological output (2003_2005 first), and keeps the workbook's row order within each network.
 - Five pre-2015 DPS whose provinces no longer exist have their own registry rows.
