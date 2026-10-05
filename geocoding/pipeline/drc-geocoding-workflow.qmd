@@ -1,6 +1,6 @@
 ---
 title: "Sentinel Site Geocoding Workflow for the Democratic Republic of the Congo"
-subtitle: "Province-Constrained Coordinate Extraction Using the Google Maps Geocoding API"
+subtitle: "Province-Constrained, Multi-Provider Coordinate Extraction with Cross-Checks"
 author: "Kaiza Ilomo - Ifakara Health Institute - MoDD Africa Project"
 date: today
 format:
@@ -50,7 +50,12 @@ execute:
 
 This document geocodes the **sentinel sites** of the DRC surveillance network: the 26 sites of the 2014 network, one per province, and the 25 selected in the 2021 expansion. It derives latitude and longitude for each `sentinel_site`, using its `province` as a constraint.
 
-It produces coordinates with full provenance for every site, a review queue of anything that could not be trusted outright, and an interactive map for visual verification.
+Every site is geocoded independently by each enabled provider: the Google Geocoding API, GRID3's health-system geography, OpenStreetMap (through Nominatim and Photon) and, once it has a username, GeoNames. Two coordinate sets are then kept side by side:
+
+- **`google_first`**: Google's answer where it has one, with the open sources filling its gaps.
+- **`open_first`**: the open sources first, with Google filling only what they cannot. Every row from an open source can be published; Google's terms do not allow its coordinates to be.
+
+Each kept point is cross-checked against the other providers. The output is coordinates with full provenance for every site, a review queue per set, a long table of what every provider answered, and an interactive map for visual verification.
 
 ### Administrative Hierarchy
 
@@ -63,9 +68,10 @@ It produces coordinates with full provenance for every site, a review queue of a
 
 ### Design principles
 
-1. **Constrain, then verify.** The province is pinned server-side with Google's `components=country:CD|administrative_area:<province>` filter rather than appended to a query string. That filter is advisory rather than binding, so the province is also **checked against the response** before a result is accepted.
-2. **Judge matches on the API's own quality signals.** Calling the REST endpoint directly exposes `partial_match`, `location_type`, `types` and the result count. These drive the quality gate, instead of inferring quality from whether a coordinate came back at all.
-3. **Refuse rather than downgrade.** A candidate in the wrong province, or whose name bears no resemblance to the site, is discarded and the ladder keeps walking. For spatial analysis a wrong coordinate is worse than a missing one.
+1. **Constrain, then verify.** Each provider is pinned to the province its own way: Google's `components=country:CD|administrative_area:<province>` filter, Nominatim's structured `state=`, a Photon bounding box, GRID3's province field. None of these is trusted on its own, so the province is also **checked against the response** before a result is accepted.
+2. **Judge matches on what the provider says about them.** The quality gate reads each answer's kind of place, province and name. A town, a building, a province or health-zone centroid, and a street or river are treated differently, whichever provider returned them.
+3. **Refuse rather than downgrade.** A candidate in the wrong province, whose name bears no resemblance to the site, that is an area's centroid, or that is a street or river, is discarded and the ladder keeps walking. For spatial analysis a wrong coordinate is worse than a missing one.
+4. **Ask every source, and let them check each other.** Agreement between independent sources is the best evidence available without field coordinates. Nominatim and Photon both serve OpenStreetMap, so they count as one source.
 
 ### Background
 
@@ -129,48 +135,53 @@ knitr::opts_chunk$set(echo = knitr::is_html_output())
 
 source("config.R")
 source("geocode-functions.R")
+source("providers.R")
 
 dir.create(paths$output, showWarnings = FALSE, recursive = TRUE)
 ```
 
 ### API Credentials
 
-The Google Maps Geocoding API requires a key with the **Geocoding API** enabled
-(<https://console.cloud.google.com/apis/credentials>). It is read from the
-`GOOGLE_MAPS_API_KEY` environment variable and is never printed or written to
-any output file.
+Credentials are read from the environment and are never printed or written to
+any output file. They are needed only for requests that are not already
+cached, so a re-render needs none.
+
+- `GOOGLE_MAPS_API_KEY`: a Google Cloud key with the **Geocoding API**
+  enabled (<https://console.cloud.google.com/apis/credentials>).
+- `GEONAMES_USERNAME`: a free account at <https://www.geonames.org/login>,
+  with its free web services enabled. GeoNames stays off in `config.R` until
+  this exists.
+- `NOMINATIM_EMAIL` (optional): a contact address Nominatim's operators can
+  use if a request causes trouble.
+
+GRID3 and Photon need nothing.
 
 ```{r}
 #| label: api-key-check
 #| eval: true
 
-google_api_key <- Sys.getenv("GOOGLE_MAPS_API_KEY")
-
-if (nchar(google_api_key) == 0) {
-  stop("GOOGLE_MAPS_API_KEY is not set. Export it before rendering this document.")
-}
-
-cat("Google Maps API key detected (", nchar(google_api_key), " characters).\n", sep = "")
+credential_status() |>
+  kable(caption = "Credentials for the enabled providers")
 ```
 :::
 
 ## Province Validation
 
 The input uses the **current 26-province** configuration created by the 2015
-reorganisation, which is the structure reflected in Google's — and
-OpenStreetMap's — administrative data. Each province appears exactly once, with
-one sentinel site.
+reorganisation, which is the structure the providers' administrative data
+reflects. GeoNames is the exception: it names provinces in English, so its
+results are mapped onto the 26 through their GeoNames codes.
 
 This matters because the province is not merely appended to a query string: it
-is pinned as a `components` filter and then checked against the response. A
-pre-2015 name (Bandundu, Katanga, Orientale, Bas-Congo, Kasaï-Occidental) or a
-typo would silently weaken that constraint on every query for the affected
-site, so the input is validated against the canonical list before any request
-is made.
+pins each query and is then checked against the response. A pre-2015 name
+(Bandundu, Katanga, Orientale, Bas-Congo, Kasaï-Occidental) or a typo would
+silently weaken that constraint on every query for the affected site, so the
+input is validated against the canonical list before any request is made.
 
 Note that the input spells provinces inconsistently — `Kasaï` carries its
-diaeresis while `Bas-Uele` does not. Comparison runs through `normalise_name()`,
-which folds accents and punctuation, so no cleaning is required.
+diaeresis while `Bas-Uele` does not, and Photon writes "Kasaï Central" without
+the hyphen. Comparison runs through `normalise_name()`, which folds accents and
+punctuation, so no cleaning is required.
 
 ```{r}
 #| label: province-list
@@ -186,14 +197,13 @@ tibble(Province = drc_provinces) |>
 
 ### The Query Ladder
 
-Each site is resolved by walking an ordered ladder of query variants and
-stopping at the first candidate that passes the quality gate. The rung that
-succeeded is recorded, so it is visible afterwards how hard the geocoder had to
-work.
+Each provider resolves each site by walking an ordered ladder of query
+variants and stopping at the first candidate that passes the quality gate. The
+rung that succeeded is recorded, so it is visible afterwards how hard the
+geocoder had to work.
 
-Rungs 1 and 2 send `components=country:CD|administrative_area:{province}`,
-pinning the province server-side. Rungs 3 and 4 send `components=country:CD`
-only.
+Rungs 1 and 2 are pinned to the province. Rungs 3 and 4 are restricted only to
+the country.
 
 | Rung | `address` | Province pinned |
 |:-----|:------------------------------------------------------|:----------------|
@@ -202,11 +212,28 @@ only.
 | 3 | `{site}, {province}, Republique Democratique du Congo` | no |
 | 4 | `{site}` | no |
 
-Rung 3 keeps the province as a search term but drops the server-side
-constraint; rung 4 is a last resort restricted only by country.
+Rung 3 keeps the province as a search term but drops the constraint; rung 4 is
+a last resort restricted only by country.
 
-Four requests per site at worst — around 100 in total, well inside the free
-monthly tier.
+Each provider expresses "pinned" in its own terms and skips the rungs that mean
+nothing to it:
+
+| Provider | Pinned rungs | Free rungs | Rungs skipped |
+|:---|:---|:---|:---|
+| Google | `components=country:CD\|administrative_area:{province}` | `components=country:CD` | none |
+| GRID3 | rung 1: the central office (BCZ) of the health zone named `{site}`. Rung 2: a settlement named `{site}` *inside* the health zone named `{site}` | — | 3, 4 |
+| Nominatim | structured `city={address}&state={province}` | free text, `countrycodes=cd` | 1 |
+| Photon | `bbox` = the province's extent | `countrycode=CD` | 1 |
+| GeoNames | `adminCode1` = the province's code | `country=CD` | 1 |
+
+GRID3 is not a geocoder but a set of public tables, fetched once and matched
+locally. It lists no town or city, and village names repeat — Tanganyika has
+five villages called Nyemba, none of them the town — so a settlement is only
+matched inside the health zone of the same name.
+
+The first run makes at most four requests per site per provider. Nominatim
+allows one request per second, so it takes a few minutes; every later render
+comes from the cache.
 
 ```{r}
 #| label: query-ladder-example
@@ -214,7 +241,7 @@ monthly tier.
 
 build_query_variants("Vanga", "Kwilu") |>
   select(rung, address, components) |>
-  kable(caption = "The ladder for one site")
+  kable(caption = "The ladder for one site (Google's components shown)")
 ```
 
 ### The Quality Gate
@@ -222,16 +249,26 @@ build_query_variants("Vanga", "Kwilu") |>
 A candidate is **rejected outright** — discarded, with the ladder continuing —
 when any of the following hold:
 
-1. `location_type == "APPROXIMATE"` *and* its `types` include
-   `administrative_area_level_1`, `administrative_area_level_2` or `country`.
-   The geocoder returned a province or district centroid rather than the site.
-2. Its coordinates fall outside the DRC bounding box.
-3. **The returned `administrative_area_level_1` is not the province asked for.**
-4. **The returned name bears no resemblance to the site name** — similarity
-   below `r gate$similarity_floor`.
+1. **It is the centroid of an area**: an `APPROXIMATE` Google result typed as
+   `administrative_area_level_1`, `administrative_area_level_2` or `country`,
+   or an OSM `boundary=administrative` or `boundary=health` polygon. The
+   geocoder returned the enclosing province or health zone rather than the
+   site.
+2. **It is a street, river or railway line.** Streets and rivers are often
+   named after towns: OSM has an Avenue Mwene-Ditu in Kinshasa and a Nyemba
+   river in Tanganyika.
+3. Its coordinates fall outside the DRC bounding box.
+4. **The returned province is not the province asked for.**
+5. **The returned name bears no resemblance to the site name** — similarity
+   below `r gate$similarity_floor`. Where a provider names the place itself,
+   whole names are compared: Nominatim's answer for Nyanga in Kasaï was the
+   village of Bakwa-Nyanga, about 150 km from Nyanga, which a substring match
+   would have scored 1.00.
+6. **The names carry different numbers**: GRID3's office for Maluku 2, 70 km
+   from Maluku 1, scores 0.88 on the name alone.
 
-Rules 3 and 4 exist because of a real failure. In testing against the live API,
-a query pinned to `administrative_area:Kasai` came back with
+Rules 4 and 5 exist because of a real failure. In testing against the live API,
+a Google query pinned to `administrative_area:Kasai` came back with
 *"Avenue TP numéro 3C, Quartier Funa, Kinshasa"* — a business roughly 700 km
 from Kasaï — and the gate accepted it. Two lessons followed:
 
@@ -240,13 +277,18 @@ from Kasaï — and the gate accepted it. Two lessons followed:
 - Name similarity separates good from bad cleanly: every correct match scored
   **1.00**, while the two wrong ones scored **0.56** and **0.25**.
 
-Note what is deliberately *not* a rule: a blacklist on `establishment` or
-`point_of_interest` types. Both bad results carried them — but so would a
-legitimate match on "Centre de Santé de …", so the type alone proves nothing.
+Rules 1, 2, 5 and 6 come from the open providers' live responses, which are
+kept as test fixtures.
 
-Surviving candidates carry **soft flags** that set the confidence tier: more
-than one result returned, an unverifiable province, an imperfect name match, or
-a `partial_match` *combined with* a weak name. That last qualifier matters —
+Note what is deliberately *not* a rule: a blacklist on `establishment` or
+`point_of_interest` types. Both bad Google results carried them — but so would
+a legitimate match on "Centre de Santé de …", and so does a health zone's
+central office, so the type alone proves nothing.
+
+Surviving candidates carry **soft flags** that set the confidence tier: an
+ambiguous answer (more than one Google result, or more than one distinct place
+from an open provider), an unverifiable province, an imperfect name match, or a
+`partial_match` *combined with* a weak name. That last qualifier matters —
 `partial_match` fires on every rung-1 query simply because the result does not
 contain the literal `"Zone de Sante de "` prefix, and counting it unconditionally
 made `high` confidence unreachable for every site in the earlier run.
@@ -259,9 +301,35 @@ made `high` confidence unreachable for every site in the earlier run.
 | `manual` | Coordinates pinned by an analyst in `manual_overrides.csv` |
 | `failed` | No candidate survived the gate |
 
-Everything below `high` is written to a review file. A site that **fails** is
-working as intended: it means no candidate could be trusted, and the location
-should be pinned by hand rather than guessed.
+A site that **fails** is working as intended: it means no candidate could be
+trusted, and the location should be pinned by hand rather than guessed.
+
+### Chains and the Cross-Check
+
+Both coordinate sets choose from the same answers, so they succeed and fail on
+exactly the same sites; they differ only in whose coordinate is kept.
+
+```{r}
+#| label: chain-orders
+#| eval: true
+
+tibble(Chain = names(chains),
+       Order = map_chr(chains, \(ch) paste(ch[ch %in% enabled_providers()],
+                                           collapse = " → "))) |>
+  kable(caption = "Provider order in each coordinate set (enabled providers only)")
+```
+
+The kept point is compared with every other provider's accepted point:
+
+| `crosscheck` | Meaning |
+|---|---|
+| `agree` | another source put the site within `r crosscheck$agree_km` km, and none further away |
+| `disagree` | some provider put it more than `r crosscheck$agree_km` km away |
+| `single-source` | no other source found it |
+
+The cross-check never rejects a point and does not change its confidence tier.
+Anything below `high`, and anything short of `agree`, is written to the review
+file of its set.
 
 ## Data Preparation
 
@@ -275,7 +343,7 @@ sites <- read_sites() |>
 
 cat("=====================================\n")
 cat("DRC SENTINEL SITE GEOCODING\n")
-cat("Geocoding Service: Google Maps Geocoding API\n")
+cat("Providers:", paste(enabled_providers(), collapse = ", "), "\n")
 cat("=====================================\n\n")
 cat("Total sites to geocode:", nrow(sites), "\n")
 cat("Unique provinces (adm1):", length(unique(sites$province)), "\n\n")
@@ -297,7 +365,8 @@ sites |>
 #| eval: true
 
 n_cached <- cache_load()
-cat("Cached responses available:", n_cached, "\n")
+cat("Cached responses available:",
+    paste0(names(n_cached), " ", n_cached, collapse = ", "), "\n")
 ```
 
 ## Main Processing Loop
@@ -306,68 +375,73 @@ cat("Cached responses available:", n_cached, "\n")
 #| label: processing-loop
 #| eval: true
 
-results <- list()
+answers <- list()
 audits  <- list()
 start_time <- Sys.time()
 
-cat("\nStarting geocoding process with the Google Maps Geocoding API...\n")
+cat("\nGeocoding with", paste(enabled_providers(), collapse = ", "), "...\n")
 cat("================================================================\n\n")
 
 for (i in seq_len(nrow(sites))) {
 
   site_row <- sites[i, ]
 
-  out <- geocode_site(
+  out <- geocode_point_all(
     site_id  = site_row$site_id,
     site     = site_row$sentinel_site,
     province = site_row$province
   )
 
-  results[[i]] <- out$result
+  answers[[i]] <- out$by_provider
   audits[[i]]  <- out$audit
+  cache_save()   # an interrupted run keeps what it has fetched
 
   # A per-site trace is useful when running interactively but is noise in a
   # printed report, where the summary tables below say the same thing.
   if (knitr::is_html_output()) {
     elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
-    cat(sprintf("[%2d/%2d] %-12s %-18s -> %-7s (rung %s) | %.2f min elapsed\n",
-                i, nrow(sites),
-                site_row$sentinel_site,
-                site_row$province,
-                out$result$confidence,
-                ifelse(is.na(out$result$resolved_at_rung), "-", out$result$resolved_at_rung),
+    cat(sprintf("[%2d/%2d] %-14s %-16s %s | %.2f min elapsed\n",
+                i, nrow(sites), site_row$sentinel_site, site_row$province,
+                paste0(out$by_provider$provider, ":", out$by_provider$confidence,
+                       collapse = " "),
                 elapsed))
   }
 }
 
-geocoded  <- bind_rows(results)
-candidates <- bind_rows(audits)
+by_provider <- bind_rows(answers)
+candidates  <- bind_rows(audits)
 
 cache_save()
 
 total_time <- difftime(Sys.time(), start_time, units = "mins")
+provider_stats <- cache_stats() |> filter(provider %in% enabled_providers())
 
 cat("\nGeocoding complete.\n")
 cat("Total time:", round(total_time, 2), "minutes\n")
-cat("API calls made:", .geocode_cache$calls, "| served from cache:", .geocode_cache$hits, "\n\n")
+cat("Requests per provider:",
+    paste0(provider_stats$provider, " ", provider_stats$requests, collapse = ", "),
+    "| served from cache:", sum(provider_stats$cache_hits), "\n\n")
 ```
 
-## Manual Overrides
+## Coordinate Sets
 
-Sites the geocoder gets wrong are corrected by adding a row to
-`../input/manual_overrides.csv` (`site_id, latitude, longitude, note`) and
-re-rendering. Overrides take precedence over any API result and are stamped
-`geocode_status = "manual"`.
+Each chain keeps the first answer in its order. Sites the geocoders get wrong
+are corrected by adding a row to `../input/manual_overrides.csv`
+(`site_id, latitude, longitude, note`) and re-rendering. Overrides take
+precedence in both sets and are stamped `geocode_status = "manual"`; the
+cross-check then compares the pinned point with every provider.
 
 ```{r}
-#| label: manual-overrides
+#| label: coordinate-sets
 #| eval: true
 
-n_before <- sum(geocoded$geocode_status == "manual")
-geocoded <- apply_manual_overrides(geocoded)
-n_after  <- sum(geocoded$geocode_status == "manual")
+geocoded <- map(chains, \(ch) by_provider |>
+  select_chain(ch) |>
+  apply_manual_overrides() |>
+  crosscheck_points(by_provider))
 
-cat("Manual overrides applied:", n_after - n_before, "\n")
+cat("Manual overrides applied:",
+    sum(geocoded[[1]]$geocode_status == "manual"), "\n")
 ```
 
 ## Data Export
@@ -377,29 +451,41 @@ cat("Manual overrides applied:", n_after - n_before, "\n")
 #| eval: true
 
 # Preserve every input column, then attach coordinates and provenance
-final <- sites |>
-  left_join(geocoded, by = "site_id") |>
-  mutate(
-    latitude  = as.numeric(latitude),
-    longitude = as.numeric(longitude)
-  )
+finals <- map(geocoded, \(g) sites |>
+  left_join(g, by = "site_id") |>
+  mutate(latitude = as.numeric(latitude), longitude = as.numeric(longitude)))
 
-write.csv(final, file.path(paths$output, "drc_sentinel_sites_geocoded.csv"),
-          row.names = FALSE)
-cat("Main results saved to: output/drc_sentinel_sites_geocoded.csv\n")
+final_all <- imap(finals, \(f, ch) mutate(f, chain = ch, .before = 1)) |>
+  list_rbind()
 
-# Full audit trail: every candidate seen at every rung, accepted or not
+for (ch in names(finals)) {
+  f <- finals[[ch]]
+  write.csv(f, file.path(paths$output, sprintf("drc_sentinel_sites_geocoded_%s.csv", ch)),
+            row.names = FALSE)
+  review <- f |> filter(needs_review(confidence, crosscheck))
+  write.csv(review, file.path(paths$output, sprintf("drc_geocoding_review_%s.csv", ch)),
+            row.names = FALSE)
+  cat(sprintf("%s results saved to: output/drc_sentinel_sites_geocoded_%s.csv\n", ch, ch))
+  cat(sprintf("%s review queue (%d sites): output/drc_geocoding_review_%s.csv\n",
+              ch, nrow(review), ch))
+}
+
+# What every provider answered, independently: the benchmark's input
+write.csv(sites |> select(site_id, province, sentinel_site) |>
+            right_join(by_provider, by = "site_id"),
+          file.path(paths$output, "drc_geocoding_by_provider.csv"), row.names = FALSE)
+cat("Every provider's answer saved to: output/drc_geocoding_by_provider.csv\n")
+
+write.csv(provider_stats |> mutate(point_set = "sentinel_site", .before = 1),
+          file.path(paths$output, "drc_geocoding_provider_stats.csv"), row.names = FALSE)
+
+# Full audit trail: every candidate seen at every rung, by every provider
 write.csv(candidates, file.path(paths$output, "drc_geocoding_candidates.csv"),
           row.names = FALSE)
 cat("Candidate audit trail saved to: output/drc_geocoding_candidates.csv\n")
 
-# Anything short of a clean high-confidence match
-review <- final |> filter(!confidence %in% c("high", "manual"))
-write.csv(review, file.path(paths$output, "drc_geocoding_review.csv"),
-          row.names = FALSE)
-cat("Review queue (", nrow(review), " sites) saved to: output/drc_geocoding_review.csv\n", sep = "")
-
-failed <- final |> filter(is.na(latitude) | is.na(longitude))
+# Both sets fail on the same sites, as both hold every provider
+failed <- finals[[1]] |> filter(is.na(latitude) | is.na(longitude))
 write.csv(failed, file.path(paths$output, "drc_geocoding_failed.csv"),
           row.names = FALSE)
 cat("Failed cases (", nrow(failed), " sites) saved to: output/drc_geocoding_failed.csv\n", sep = "")
@@ -413,28 +499,57 @@ cat("Failed cases (", nrow(failed), " sites) saved to: output/drc_geocoding_fail
 #| label: success-metrics
 #| eval: true
 
-summary_stats <- final |>
+tiers <- c("high", "medium", "low", "manual", "failed")
+
+final_all |>
+  group_by(Chain = chain) |>
   summarise(
-    total_sites  = n(),
-    geocoded     = sum(!is.na(latitude)),
-    failed       = sum(is.na(latitude)),
-    success_rate = sprintf("%.1f%%", 100 * sum(!is.na(latitude)) / n())
-  )
+    Sites          = n(),
+    Geocoded       = sum(!is.na(latitude)),
+    Failed         = sum(is.na(latitude)),
+    `Success rate` = sprintf("%.1f%%", 100 * sum(!is.na(latitude)) / n()),
+    `From Google`  = sum(geocode_status == "google"),
+    `Needs review` = sum(needs_review(confidence, crosscheck)),
+    .groups = "drop"
+  ) |>
+  kable(caption = "Results summary per coordinate set")
 
-tibble(
-  Measure = c("Total sites", "Successfully geocoded", "Failed", "Success rate"),
-  Value   = c(summary_stats$total_sites, summary_stats$geocoded,
-              summary_stats$failed, summary_stats$success_rate)
-) |>
-  kable(caption = "Results summary")
-
-final |>
-  count(confidence, name = "sites") |>
-  arrange(match(confidence, c("high", "medium", "low", "manual", "failed"))) |>
+final_all |>
+  count(chain, confidence) |>
+  pivot_wider(names_from = chain, values_from = n, values_fill = 0) |>
+  arrange(match(confidence, tiers)) |>
   kable(caption = "Confidence tiers")
+
+final_all |>
+  count(chain, source = geocode_status) |>
+  pivot_wider(names_from = chain, values_from = n, values_fill = 0) |>
+  kable(caption = "Which provider each kept coordinate came from")
+
+final_all |>
+  count(chain, crosscheck) |>
+  pivot_wider(names_from = chain, values_from = n, values_fill = 0) |>
+  kable(caption = "Cross-check of the kept coordinates")
 ```
 
-### Which Rung Resolved Each Site
+### What Each Provider Found on Its Own
+
+Each provider's answers, before any chain chooses between them.
+`drc-geocoding-benchmark.qmd` compares them in detail.
+
+```{r}
+#| label: provider-results
+#| eval: true
+
+by_provider |>
+  count(provider, confidence) |>
+  pivot_wider(names_from = confidence, values_from = n, values_fill = 0) |>
+  select(provider, any_of(tiers)) |>
+  left_join(provider_stats |> select(provider, requests, cache_hits), by = "provider") |>
+  arrange(match(provider, names(providers))) |>
+  kable(caption = "Confidence tiers per provider, and this run's requests")
+```
+
+### Which Provider and Rung Resolved Each Site
 
 Most sites should resolve at rung 1 or 2, where the province is pinned. Heavy
 reliance on rungs 3–4 means the province-constrained queries are not finding
@@ -444,17 +559,19 @@ these health zones and the site names may need correcting in `site_name_fixes`.
 #| label: rung-analysis
 #| eval: true
 
-rung_tbl <- final |>
-  select(sentinel_site, province, matched_admin1, resolved_at_rung,
-         confidence, location_type) |>
-  arrange(resolved_at_rung, sentinel_site)
+final_all |>
+  mutate(answer = if_else(is.na(latitude), "failed",
+                          sprintf("%s r%s %s", geocode_status,
+                                  coalesce(as.character(resolved_at_rung), "-"),
+                                  confidence))) |>
+  select(chain, sentinel_site, province, answer) |>
+  pivot_wider(names_from = chain, values_from = answer) |>
+  arrange(sentinel_site) |>
+  kable(caption = "Provider, rung and tier per site, in each set")
 
-if (knitr::is_latex_output()) rung_tbl <- select(rung_tbl, -location_type)
-
-kable(rung_tbl, caption = "Resolution rung by site")
-
-final |>
-  count(resolved_at_rung, name = "sites") |>
+final_all |>
+  count(chain, resolved_at_rung) |>
+  pivot_wider(names_from = chain, values_from = n, values_fill = 0) |>
   kable(caption = "Sites resolved per rung")
 ```
 
@@ -464,7 +581,7 @@ final |>
 #| label: provincial-analysis
 #| eval: true
 
-by_province <- final |>
+finals[[1]] |>
   group_by(province) |>
   summarise(
     total        = n(),
@@ -472,16 +589,8 @@ by_province <- final |>
     success_rate = sprintf("%.1f%%", 100 * sum(!is.na(latitude)) / n()),
     .groups = "drop"
   ) |>
-  arrange(desc(total), province)
-
-# With one sentinel site per province this collapses to a column of 1s, so it
-# is only worth printing once a province carries more than one site.
-if (max(by_province$total) > 1) {
-  kable(by_province, caption = "Success rate by province")
-} else {
-  cat("One sentinel site per province, so a provincial breakdown adds nothing\n")
-  cat("beyond the confidence and rung tables above.\n")
-}
+  arrange(desc(total), province) |>
+  kable(caption = "Success rate by province (the same in both sets)")
 ```
 
 ## Data Quality Checks
@@ -494,15 +603,15 @@ if (max(by_province$total) > 1) {
 
 bb <- country_profile$bbox
 
-out_of_bounds <- final |>
+out_of_bounds <- final_all |>
   filter(!is.na(latitude)) |>
   filter(latitude  < bb$lat_min | latitude  > bb$lat_max |
          longitude < bb$lon_min | longitude > bb$lon_max)
 
 cat("Coordinate validation (DRC bounds: lat ", bb$lat_min, " to ", bb$lat_max,
     ", lon ", bb$lon_min, " to ", bb$lon_max, ")\n", sep = "")
-cat("Sites within bounds:", sum(!is.na(final$latitude)) - nrow(out_of_bounds), "\n")
-cat("Sites outside bounds:", nrow(out_of_bounds), "\n")
+cat("Coordinates within bounds:", sum(!is.na(final_all$latitude)) - nrow(out_of_bounds), "\n")
+cat("Coordinates outside bounds:", nrow(out_of_bounds), "\n")
 
 if (nrow(out_of_bounds) > 0) {
   write.csv(out_of_bounds, file.path(paths$output, "drc_out_of_bounds.csv"),
@@ -513,64 +622,70 @@ if (nrow(out_of_bounds) > 0) {
 
 ### Duplicate Coordinates
 
-Two sites sharing a coordinate almost always means a fallback to a shared
-administrative centroid slipped past the quality gate.
+Two sites sharing a coordinate within a set almost always means a fallback to a
+shared administrative centroid slipped past the quality gate.
 
 ```{r}
 #| label: duplicate-coordinates
 #| eval: true
 
-dupes <- final |>
+dupes <- final_all |>
   filter(!is.na(latitude), !is.na(longitude)) |>
-  count(latitude, longitude, name = "n_sites") |>
+  count(chain, latitude, longitude, name = "n_sites") |>
   filter(n_sites > 1)
 
 if (nrow(dupes) == 0) {
-  cat("No duplicate coordinates. Every site resolved to a distinct point.\n")
+  cat("No duplicate coordinates. In each set, every site resolved to a distinct point.\n")
 } else {
   cat("WARNING:", nrow(dupes), "coordinate pair(s) shared by more than one site.\n")
-  final |>
-    semi_join(dupes, by = c("latitude", "longitude")) |>
-    select(sentinel_site, province, latitude, longitude, matched_address) |>
-    arrange(latitude, longitude) |>
+  final_all |>
+    semi_join(dupes, by = c("chain", "latitude", "longitude")) |>
+    select(chain, sentinel_site, province, geocode_status, latitude, longitude,
+           matched_address) |>
+    arrange(chain, latitude, longitude) |>
     kable()
 }
 ```
 
 ### Province Agreement
 
-Confirms the gate held. A province mismatch is now a hard rejection, so every
-geocoded site must report the province it was asked for — any `FALSE` below
-would mean rule 3 of the quality gate is not firing.
+Confirms the gate held. A province mismatch is a hard rejection, so every
+geocoded site must report the province it was asked for — any mismatch below
+would mean rule 4 of the quality gate is not firing.
 
 ```{r}
 #| label: province-agreement
 #| eval: true
 
-agreement <- final |>
+agreement <- final_all |>
   filter(!is.na(latitude), geocode_status != "manual") |>
-  mutate(agrees = normalise_name(matched_admin1) == normalise_name(province)) |>
-  select(sentinel_site, province, matched_admin1, agrees)
+  mutate(agrees = normalise_name(matched_admin1) == normalise_name(province))
 
 n_bad <- sum(!agreement$agrees, na.rm = TRUE)
+n_unk <- sum(is.na(agreement$agrees))
 
 if (n_bad == 0) {
-  cat("All", nrow(agreement),
-      "geocoded sites returned the province they were constrained to.\n\n")
+  cat("All", nrow(agreement) - n_unk,
+      "coordinates with a returned province match the province requested.\n")
 } else {
-  cat("WARNING:", n_bad, "site(s) returned a different province than requested.\n")
-  cat("The quality gate should have rejected these -- investigate.\n\n")
+  cat("WARNING:", n_bad, "coordinate(s) returned a different province than requested.\n")
+  cat("The quality gate should have rejected these -- investigate.\n")
 }
+if (n_unk > 0) cat(n_unk, "coordinate(s) came back without a province (flagged, kept).\n")
 
-agreement |>
-  arrange(agrees, sentinel_site) |>
-  kable(caption = "Requested vs returned province")
+mismatched <- agreement |> filter(!agrees | is.na(agrees))
+if (nrow(mismatched) > 0) {
+  mismatched |>
+    select(chain, sentinel_site, province, geocode_status, matched_admin1, agrees) |>
+    kable(caption = "Coordinates whose province does not match, or is unknown")
+}
 ```
 
 ### Spot Check
 
-Every point can and should be verified by eye. Each row links to the exact
-coordinate on Google Maps and OpenStreetMap.
+Every point can and should be verified by eye. Each row shows where the two sets
+put the site, how far apart that is, and links to both points on Google Maps
+and OpenStreetMap.
 
 Pay closest attention to the urban health zones, which are not standalone
 settlements and are the most likely to resolve to something plausible but
@@ -582,37 +697,43 @@ wrong:
 - Bandundu, which is also the name of a former province
 
 Very short names such as Aba need the same care. Any address containing the
-name passes the name check.
+name passes Google's name check. Where a GRID3 health-zone office stands in
+for a site, the point is the office, not necessarily the town centre.
 
 ```{r}
 #| label: spot-check
 #| eval: true
 
-spot <- final |>
-  filter(!is.na(latitude)) |>
-  transmute(
-    Site        = sentinel_site,
-    Province    = province,
-    Matched     = matched_address,
-    Confidence  = confidence,
-    Coordinates = sprintf("%.4f, %.4f", latitude, longitude),
-    gmaps = sprintf("https://www.google.com/maps/search/?api=1&query=%f,%f",
-                    latitude, longitude),
-    osm   = sprintf("https://www.openstreetmap.org/?mlat=%f&mlon=%f#map=12/%f/%f",
-                    latitude, longitude, latitude, longitude)
-  )
+links <- function(lat, lon) {
+  if_else(is.na(lat), "",
+          sprintf("[G](https://www.google.com/maps/search/?api=1&query=%f,%f) [OSM](https://www.openstreetmap.org/?mlat=%f&mlon=%f#map=12/%f/%f)",
+                  lat, lon, lat, lon, lat, lon))
+}
+
+spot <- finals$google_first |>
+  select(site_id, Site = sentinel_site, Province = province,
+         g_src = geocode_status, g_lat = latitude, g_lon = longitude, g_x = crosscheck) |>
+  left_join(finals$open_first |>
+              select(site_id, o_src = geocode_status, o_lat = latitude,
+                     o_lon = longitude, o_x = crosscheck),
+            by = "site_id") |>
+  filter(!is.na(g_lat)) |>
+  mutate(`km apart` = round(haversine_km(g_lat, g_lon, o_lat, o_lon), 1))
 
 if (knitr::is_latex_output()) {
-  # Narrower for print: the matched address plus two links overruns the margin.
-  # colorlinks keeps the single remaining link clickable in the PDF.
+  # Narrower for print: coordinates and links overrun the margin.
   spot |>
-    transmute(Site, Province, Confidence, Coordinates,
-              Verify = sprintf("[map](%s)", gmaps)) |>
+    transmute(Site, Province, `google_first` = g_src, `open_first` = o_src,
+              `km apart`, Crosscheck = o_x) |>
     kable()
 } else {
   spot |>
-    transmute(Site, Province, Matched, Confidence, Coordinates,
-              Verify = sprintf("[Google](%s) / [OSM](%s)", gmaps, osm)) |>
+    transmute(Site, Province,
+              google_first = sprintf("%s %.4f, %.4f (%s) %s", g_src, g_lat, g_lon, g_x,
+                                     links(g_lat, g_lon)),
+              open_first   = sprintf("%s %.4f, %.4f (%s) %s", o_src, o_lat, o_lon, o_x,
+                                     links(o_lat, o_lon)),
+              `km apart`) |>
     kable()
 }
 ```
@@ -622,46 +743,47 @@ if (knitr::is_latex_output()) {
 ```{r}
 #| label: map-creation
 #| eval: true
-#| fig-cap: "Sentinel sites by geocoding confidence, over DRC province boundaries."
+#| fig-cap: "Sentinel sites in each coordinate set, by the provider each point came from, over DRC province boundaries."
 
-mapped <- final |> filter(!is.na(latitude), !is.na(longitude))
+mapped <- final_all |> filter(!is.na(latitude), !is.na(longitude))
+
+provider_colours <- c(google = "#7570b3", grid3 = "#1b9e77", nominatim = "#d95f02",
+                      photon = "#e7298a", geonames = "#66a61e", manual = "#3288bd")
 
 if (nrow(mapped) > 0) {
 
-  pal <- colorFactor(palette = "viridis", domain = mapped$province)
+  pal <- colorFactor(palette = unname(provider_colours), levels = names(provider_colours))
 
   map <- leaflet(mapped) |>
     addTiles() |>
     addCircleMarkers(
       ~longitude, ~latitude,
-      group = ~confidence,
+      group = ~chain,
       popup = ~paste0(
-        "<b>", sentinel_site, "</b><br>",
+        "<b>", sentinel_site, "</b> (", chain, ")<br>",
         "<b>Site ID:</b> ", site_id, "<br>",
         "<b>Province (input):</b> ", province, "<br>",
         "<b>Province (returned):</b> ", matched_admin1, "<br>",
-        "<b>Matched address:</b> ", matched_address, "<br>",
-        "<b>Confidence:</b> ", confidence, " (rung ", resolved_at_rung, ")<br>",
-        "<b>Location type:</b> ", location_type, "<br>",
+        "<b>Source:</b> ", geocode_status, ", rung ", resolved_at_rung, "<br>",
+        "<b>Matched:</b> ", matched_address, "<br>",
+        "<b>Confidence:</b> ", confidence, "<br>",
+        "<b>Cross-check:</b> ", crosscheck, " (", crosscheck_note, ")<br>",
         "<b>Coordinates:</b> ", round(latitude, 4), ", ", round(longitude, 4)
       ),
       label = ~sentinel_site,
-      labelOptions = labelOptions(noHide = TRUE, direction = "top",
-                                  textOnly = TRUE,
-                                  style = list("font-weight" = "bold")),
-      color = ~pal(province),
+      color = ~pal(geocode_status),
       radius = 7,
       fillOpacity = 0.8
     ) |>
     addLegend(
       "bottomright",
       pal = pal,
-      values = ~province,
-      title = "Province",
+      values = ~geocode_status,
+      title = "Source",
       opacity = 1
     ) |>
     addLayersControl(
-      overlayGroups = unique(mapped$confidence),
+      baseGroups = names(chains),
       options = layersControlOptions(collapsed = FALSE)
     )
 
@@ -679,7 +801,7 @@ if (nrow(mapped) > 0) {
   if (knitr::is_html_output()) {
     map
   } else {
-    boundaries <- read.csv("../reference/drc_provinces.csv", stringsAsFactors = FALSE)
+    boundaries <- read.csv(paths$provinces, stringsAsFactors = FALSE)
 
     ggplot() +
       geom_polygon(
@@ -689,22 +811,11 @@ if (nrow(mapped) > 0) {
       ) +
       geom_point(
         data = mapped,
-        aes(longitude, latitude, fill = confidence),
-        shape = 21, size = 2.8, colour = "grey20", stroke = 0.4
+        aes(longitude, latitude, fill = geocode_status),
+        shape = 21, size = 2.2, colour = "grey20", stroke = 0.3
       ) +
-      geom_text(
-        data = mapped |>
-          arrange(latitude) |>
-          mutate(lab_vjust = if_else(row_number() %% 2 == 0, -1.1, 2.0)),
-        aes(longitude, latitude, label = sentinel_site, vjust = lab_vjust),
-        size = 2.2, colour = "grey15"
-      ) +
-      scale_fill_manual(
-        values = c(high = "#1a9850", medium = "#fee08b",
-                   low = "#f46d43", manual = "#3288bd"),
-        breaks = c("high", "medium", "low", "manual"),
-        name = "Confidence"
-      ) +
+      scale_fill_manual(values = provider_colours, name = "Source") +
+      facet_wrap(~chain, ncol = 1) +
       coord_fixed(1.05, expand = TRUE) +
       labs(x = NULL, y = NULL) +
       theme_minimal(base_size = 9) +
@@ -723,76 +834,101 @@ if (nrow(mapped) > 0) {
 
 ## Troubleshooting
 
-### Issue 1: `REQUEST_DENIED` from the API
+### Issue 1: `REQUEST_DENIED` from Google, or a credential "is not set"
 
-**Cause**: The key is missing, restricted, or the Geocoding API is not enabled
-on the Google Cloud project.
+**Cause**: An uncached request needed a credential that is missing or
+restricted. For Google: the key is missing, restricted, or the Geocoding API
+is not enabled on the Google Cloud project.
 
-**Solution**: Enable "Geocoding API" at
-<https://console.cloud.google.com/apis/library>, and check that any HTTP
-referrer or IP restrictions on the key permit server-side use.
+**Solution**: Export the variable the message names. For Google, enable
+"Geocoding API" at <https://console.cloud.google.com/apis/library>, and check
+that any HTTP referrer or IP restrictions on the key permit server-side use. To
+run without a provider, set its `enabled` to `FALSE` in `config.R`.
 
 ### Issue 2: A site is rejected for the wrong province
 
-**Cause**: Google returned a result whose `administrative_area_level_1` differs
-from the province the query was pinned to. The `components` filter is advisory,
-so this happens when the site name matches something better-known elsewhere in
-the country — typically a business or street in Kinshasa.
+**Cause**: The provider returned a result whose province differs from the one
+the query was pinned to. Google's `components` filter is advisory, and the free
+rungs of every provider search the whole country, so this happens when the
+site name matches something better-known elsewhere — typically a business or
+street in Kinshasa, or a village of the same name.
 
 **Solution**: The rejection is correct; a point in the wrong province is
-worthless. Check `drc_geocoding_candidates.csv` to see what was offered. If the
-site simply is not in Google's data, pin it in `manual_overrides.csv`.
+worthless. Check `drc_geocoding_candidates.csv` to see what was offered. If no
+provider has the site, pin it in `manual_overrides.csv`.
 
 ### Issue 3: A site resolves only at rung 3 or 4
 
-**Cause**: The province-constrained rungs returned `ZERO_RESULTS`, or everything
-they offered was rejected.
+**Cause**: The province-constrained rungs found nothing, or everything they
+offered was rejected.
 
 **Solution**: Check the audit trail for what each rung returned. The site name
-is most likely spelled differently in Google's data — add a correction to
+is most likely spelled differently in the providers' data — add a correction to
 `site_name_fixes` in `config.R` and re-run.
 
 ### Issue 4: A site is rejected as an administrative-area centroid
 
-**Cause**: The health zone is not a named settlement in Google's data, so the
-geocoder fell back to the enclosing province or territory.
+**Cause**: The health zone is not a named settlement in the provider's data,
+so it returned the enclosing province or the health zone's polygon. OSM maps
+health zones as `boundary=health` polygons, and for some sites (Nyanga, Manika,
+Nyarambe) that is all it has.
 
-**Solution**: This rejection is intentional — a province centroid is worse than
-no coordinate. Pin the true location in `manual_overrides.csv`.
+**Solution**: This rejection is intentional — an area's centroid is worse than
+no coordinate. GRID3's health-zone office often covers these sites; otherwise
+pin the true location in `manual_overrides.csv`.
 
-### Issue 5: Coordinates outside the DRC
+### Issue 5: Nominatim or Photon refuses requests (HTTP 403 or 429)
 
-**Cause**: Should be impossible given `components=country:CD`. If it occurs, the
-`components` parameter is not reaching the API.
+**Cause**: Both public services throttle heavy use. Nominatim refuses requests
+without an identifying User-Agent and allows at most one per second.
 
-**Solution**: Inspect the `components` column in the candidate audit trail.
+**Solution**: Wait and re-render; everything already answered is cached. Do not
+lower `rate_delay` in `config.R`.
 
-### Issue 6: The document re-renders without contacting the API
+### Issue 6: Coordinates outside the DRC
+
+**Cause**: Should be impossible: every provider is restricted to the country,
+and the gate rejects anything outside the bounding box. If it occurs, the
+country restriction is not reaching the provider.
+
+**Solution**: Inspect the `components` column and the provider's rows in the
+candidate audit trail.
+
+### Issue 7: The document re-renders without contacting any provider
 
 **Cause**: This is the response cache working as intended.
 
-**Solution**: Delete `../cache/google_geocode_cache.rds` to force fresh lookups.
+**Solution**: Delete a provider's `../cache/{provider}_geocode_cache.rds` to
+force fresh lookups from it. Google's answers expire by themselves after 30
+days.
 :::
 
 ## Output Files
 
+`{chain}` is `google_first` or `open_first`.
+
 | File | Description |
-|:----------------------------------|:--------------------------------------|
-| `drc_sentinel_sites_geocoded.csv` | Input columns plus coordinates and full provenance |
-| `drc_geocoding_candidates.csv` | Every candidate at every rung, accepted or rejected |
-| `drc_geocoding_review.csv` | Anything below `high` confidence |
-| `drc_geocoding_failed.csv` | Sites with no acceptable candidate |
+|:------------------------------------------------|:------------------------------|
+| `drc_sentinel_sites_geocoded_{chain}.csv` | Input columns plus coordinates, provenance and cross-check, per set |
+| `drc_geocoding_review_{chain}.csv` | Anything below `high` confidence or short of `agree`, per set |
+| `drc_geocoding_by_provider.csv` | Every provider's own answer for every site |
+| `drc_geocoding_candidates.csv` | Every candidate at every rung, from every provider, accepted or rejected |
+| `drc_geocoding_provider_stats.csv` | Requests and cache hits per provider for this run |
+| `drc_geocoding_failed.csv` | Sites no provider could resolve |
 | `drc_out_of_bounds.csv` | Coordinates outside the DRC (only if any occur) |
-| `drc_sentinel_sites_map.html` | Interactive map |
+| `drc_sentinel_sites_map.html` | Interactive map of both sets |
 
 ## Appendices
 
 ::: {.content-visible when-format="html"}
 
-### Appendix A: API Documentation
+### Appendix A: Provider Documentation
 
-- <a href="https://developers.google.com/maps/documentation/geocoding/overview" target="_blank" rel="noopener noreferrer">**Google Maps Geocoding API**</a>
-- <a href="https://developers.google.com/maps/documentation/geocoding/requests-geocoding#component-filtering" target="_blank" rel="noopener noreferrer">**Component filtering**</a> — the `country` and `administrative_area` restrictions this pipeline relies on
+- <a href="https://developers.google.com/maps/documentation/geocoding/overview" target="_blank" rel="noopener noreferrer">**Google Maps Geocoding API**</a>, and its <a href="https://developers.google.com/maps/documentation/geocoding/requests-geocoding#component-filtering" target="_blank" rel="noopener noreferrer">component filtering</a>
+- <a href="https://nominatim.org/release-docs/latest/api/Search/" target="_blank" rel="noopener noreferrer">**Nominatim search API**</a> and its <a href="https://operations.osmfoundation.org/policies/nominatim/" target="_blank" rel="noopener noreferrer">usage policy</a>
+- <a href="https://github.com/komoot/photon" target="_blank" rel="noopener noreferrer">**Photon**</a>
+- <a href="https://data.grid3.org/" target="_blank" rel="noopener noreferrer">**GRID3 DRC data**</a>: health facilities and settlement names, v9.0
+- <a href="https://www.geonames.org/export/geonames-search.html" target="_blank" rel="noopener noreferrer">**GeoNames search**</a>
 :::
 
 ### Appendix B: DRC Geographic Context
@@ -804,16 +940,23 @@ no coordinate. Pin the true location in `manual_overrides.csv`.
 - French is the official language
 - Geographic bounds: latitude 13.5°S–5.4°N, longitude 12.0°E–31.4°E
 
-::: {.content-visible when-format="html"}
+### Appendix C: Caching, Terms of Use and Attribution
 
-### Appendix C: Caching and Terms of Use
+Responses are cached in `../cache/`, one file per provider, so that
+re-rendering costs no requests and yields identical coordinates.
 
-Responses are cached in `../cache/google_geocode_cache.rds` so that
-re-rendering costs no API calls and yields identical coordinates. Google Maps
-Platform terms permit only limited temporary caching of geocoding results
-(place IDs excepted), so this should be treated as a short-lived local
-convenience for iteration rather than a permanent store.
-:::
+- **Google**: Google Maps Platform terms allow latitude and longitude from the
+  Geocoding API to be cached for at most 30 days (place IDs indefinitely), and
+  do not allow them to be published or used with a non-Google map. Google
+  entries in the cache expire after 30 days, and the `google_first` set is for
+  internal analysis only.
+- **OpenStreetMap** (Nominatim, Photon): © OpenStreetMap contributors, under the
+  Open Database License. Nominatim's policy requires results to be cached.
+- **GRID3**: CC BY 4.0. Cite the GRID3 COD health facilities and settlement
+  names datasets, v9.0.
+- **GeoNames**: CC BY 4.0.
+
+Coordinates from the open sources can be published with these attributions.
 
 ## Contact and Support
 
@@ -828,6 +971,7 @@ convenience for iteration rather than a permanent store.
 
 ```{bash}
 #| eval: false
-export GOOGLE_MAPS_API_KEY="your-key-here"
+export GOOGLE_MAPS_API_KEY="your-key-here"   # needed only for uncached requests
+export NOMINATIM_EMAIL="you@example.org"     # optional
 quarto render drc-geocoding-workflow.qmd --to html
 ```

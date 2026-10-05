@@ -1,0 +1,483 @@
+---
+title: "Geocoding Provider Benchmark for the DRC Sentinel Network"
+subtitle: "Google, GRID3, OpenStreetMap and GeoNames against the Google-only setup"
+author: "Kaiza Ilomo - Ifakara Health Institute - MoDD Africa Project"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    toc-expand: true
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-overflow: wrap
+    embed-resources: true
+    link-external-newwindow: true
+    theme: cosmo
+    highlight-style: github
+    fig-width: 9
+    fig-height: 6
+    tbl-cap-location: top
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Overview
+
+Every sentinel site and every DPS seat has been geocoded independently by each
+enabled provider, through the same query ladder and quality gate. This
+document compares those answers. It makes no requests: it reads what
+`drc-geocoding-workflow.qmd` and `drc-dps-site-pairs.qmd` wrote, so render
+those first.
+
+The **baseline** is the original setup, Google alone. Its column below is
+Google's answer under the current gate. Where the snapshot of the original
+outputs exists (`../output/baseline/`), it is checked to be identical.
+
+There is no field truth yet, so this benchmark measures **coverage and
+agreement**, not accuracy. Two independent sources that put a site at the same
+place are evidence that it is there; when they disagree, at least one is wrong,
+and the table of disagreements says where to look first. Nominatim and Photon
+both serve OpenStreetMap, so agreement between them is not independent; the
+cross-check counts source families, not providers.
+
+```{r}
+#| label: setup
+#| eval: true
+
+library(tidyverse)
+library(leaflet)
+library(knitr)
+
+source("config.R")
+source("geocode-functions.R")
+
+read_output <- function(file) {
+  path <- file.path(paths$output, file)
+  if (!file.exists(path)) {
+    stop(path, " not found. Render drc-geocoding-workflow.qmd and ",
+         "drc-dps-site-pairs.qmd first.", call. = FALSE)
+  }
+  read.csv(path, stringsAsFactors = FALSE)
+}
+
+answers <- bind_rows(
+  read_output("drc_geocoding_by_provider.csv") |>
+    transmute(point_set = "sentinel_site", point_id = site_id, name = sentinel_site,
+              province, provider, latitude, longitude, geocode_status, confidence,
+              resolved_at_rung, matched_address, matched_kind, quality_flags,
+              name_similarity),
+  read_output("drc_dps_by_provider.csv") |>
+    transmute(point_set = "dps", point_id = dps_id, name = paste0(dps, " (", chef_lieu, ")"),
+              province, provider, latitude, longitude, geocode_status, confidence,
+              resolved_at_rung, matched_address, matched_kind, quality_flags,
+              name_similarity)
+)
+
+audit <- bind_rows(
+  read_output("drc_geocoding_candidates.csv") |> mutate(point_set = "sentinel_site"),
+  read_output("drc_dps_candidates.csv") |> rename(site_id = dps_id) |> mutate(point_set = "dps")
+)
+
+stats <- bind_rows(read_output("drc_geocoding_provider_stats.csv"),
+                   read_output("drc_dps_provider_stats.csv"))
+
+ran   <- intersect(names(providers), unique(answers$provider))
+tiers <- c("high", "medium", "low", "failed")
+accepted <- answers |> filter(geocode_status != "failed")
+
+cat("Providers compared:", paste(ran, collapse = ", "), "\n")
+cat("Points:", n_distinct(answers$point_id), "(",
+    n_distinct(answers$point_id[answers$point_set == "sentinel_site"]), "sentinel sites,",
+    n_distinct(answers$point_id[answers$point_set == "dps"]), "DPS seats )\n")
+```
+
+## The Baseline Holds
+
+```{r}
+#| label: baseline-check
+#| eval: true
+
+baseline_files <- c(sentinel_site = "baseline/drc_sentinel_sites_geocoded.csv",
+                    dps           = "baseline/drc_dps_geocoded.csv")
+id_cols <- c(sentinel_site = "site_id", dps = "dps_id")
+
+if (all(file.exists(file.path(paths$output, baseline_files)))) {
+  checks <- imap(baseline_files, function(f, set) {
+    base <- read.csv(file.path(paths$output, f), stringsAsFactors = FALSE) |>
+      transmute(point_id = .data[[id_cols[[set]]]], b_lat = latitude, b_lon = longitude,
+                b_conf = confidence, b_flags = coalesce(quality_flags, ""))
+    now <- answers |>
+      filter(point_set == set, provider == "google") |>
+      transmute(point_id, latitude, longitude, confidence,
+                flags = coalesce(quality_flags, ""))
+    joined <- inner_join(now, base, by = "point_id")
+    tibble(
+      `Point set`          = set,
+      Points               = nrow(joined),
+      `Same coordinates`   = sum(abs(coalesce(joined$latitude - joined$b_lat, 0)) < 1e-9 &
+                                   abs(coalesce(joined$longitude - joined$b_lon, 0)) < 1e-9 &
+                                   is.na(joined$latitude) == is.na(joined$b_lat)),
+      `Same tier`          = sum(joined$confidence == joined$b_conf),
+      `Same flags`         = sum(joined$flags == joined$b_flags)
+    )
+  })
+  list_rbind(checks) |>
+    kable(caption = "Google under the current gate against the original Google-only outputs")
+} else {
+  cat("No snapshot of the original outputs in ../output/baseline/, so the Google",
+      "column stands in for the baseline unchecked.\n")
+}
+```
+
+## Coverage and Confidence
+
+```{r}
+#| label: coverage
+#| eval: true
+
+answers |>
+  mutate(provider = factor(provider, levels = ran)) |>
+  group_by(`Point set` = point_set, provider) |>
+  summarise(
+    Points      = n(),
+    Resolved    = sum(geocode_status != "failed"),
+    high        = sum(confidence == "high"),
+    medium      = sum(confidence == "medium"),
+    low         = sum(confidence == "low"),
+    failed      = sum(confidence == "failed"),
+    `Pinned rung` = sum(resolved_at_rung <= 2, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  rename(Provider = provider) |>
+  kable(caption = "What each provider resolved, by confidence tier (google = baseline)")
+
+answers |>
+  filter(geocode_status != "failed") |>
+  count(point_set, provider, matched_kind) |>
+  pivot_wider(names_from = matched_kind, values_from = n, values_fill = 0) |>
+  arrange(point_set, match(provider, ran)) |>
+  kable(caption = "Kind of place each provider's accepted answers are")
+```
+
+### Union coverage
+
+```{r}
+#| label: union-coverage
+#| eval: true
+
+by_point <- answers |>
+  group_by(point_set, point_id, name) |>
+  summarise(n_providers = sum(geocode_status != "failed"),
+            n_families  = n_distinct(provider_family(provider[geocode_status != "failed"])),
+            google_ok   = any(provider == "google" & geocode_status != "failed"),
+            .groups = "drop")
+
+by_point |>
+  group_by(`Point set` = point_set) |>
+  summarise(
+    Points                     = n(),
+    `Google (baseline)`        = sum(google_ok),
+    `Any provider`             = sum(n_providers > 0),
+    `Only Google`              = sum(google_ok & n_providers == 1),
+    `Gained over Google`       = sum(!google_ok & n_providers > 0),
+    `2+ independent sources`   = sum(n_families >= 2),
+    `No provider`              = sum(n_providers == 0),
+    .groups = "drop"
+  ) |>
+  kable(caption = "Coverage of all providers together")
+```
+
+## Google's Failures
+
+What each provider made of the points Google could not resolve. A point that
+only one source finds is a candidate, not a confirmation: check it before use.
+
+```{r}
+#| label: google-failures
+#| eval: true
+
+g_failed <- answers |>
+  filter(provider == "google", geocode_status == "failed") |>
+  pull(point_id)
+
+if (length(g_failed) == 0) {
+  cat("Google resolved every point.\n")
+} else {
+  answers |>
+    filter(point_id %in% g_failed) |>
+    mutate(answer = if_else(geocode_status == "failed", "—",
+                            sprintf("%s r%d (%.4f, %.4f) %s", confidence, resolved_at_rung,
+                                    latitude, longitude, coalesce(matched_kind, "")))) |>
+    select(point_set, name, province, provider, answer) |>
+    pivot_wider(names_from = provider, values_from = answer) |>
+    kable(caption = "Points Google failed on: each provider's answer (tier, rung, coordinates, kind)")
+
+  # Why the gate refused what each provider offered for them
+  audit |>
+    filter(site_id %in% g_failed, !accepted, reject_reason != "no results") |>
+    mutate(reason = str_extract(reject_reason,
+      "administrative-area centroid|street, river or railway|returned province|unrelated|numbered name|not the office|bounding box")) |>
+    count(provider, reason) |>
+    pivot_wider(names_from = reason, values_from = n, values_fill = 0) |>
+    kable(caption = "Why candidates for those points were rejected")
+}
+```
+
+## Agreement Between Providers
+
+For every point two providers both resolved, the straight-line distance
+between their answers.
+
+```{r}
+#| label: pairwise
+#| eval: true
+
+pairs_km <- accepted |>
+  select(point_set, point_id, name, provider, latitude, longitude, confidence) |>
+  inner_join(accepted |> select(point_id, provider, latitude, longitude, confidence),
+             by = "point_id", suffix = c("", "_2"), relationship = "many-to-many") |>
+  filter(match(provider, ran) < match(provider_2, ran)) |>
+  mutate(km = haversine_km(latitude, longitude, latitude_2, longitude_2),
+         independent = provider_family(provider) != provider_family(provider_2))
+
+pairs_km |>
+  group_by(point_set, pair = paste(provider, "–", provider_2)) |>
+  summarise(
+    Points      = n(),
+    `median km` = round(median(km), 1),
+    `90% km`    = round(quantile(km, 0.9), 1),
+    `max km`    = round(max(km), 1),
+    `within agree_km` = sprintf("%d/%d", sum(km <= crosscheck$agree_km), n()),
+    .groups = "drop"
+  ) |>
+  kable(caption = sprintf("Distance between providers' answers (agree_km = %s)",
+                          crosscheck$agree_km))
+```
+
+```{r}
+#| label: distance-to-google
+#| eval: true
+#| fig-cap: "Distance from Google's answer, for points both resolved (log scale). The dashed line is agree_km."
+
+to_google <- pairs_km |> filter(provider == "google")
+
+if (nrow(to_google) > 0) {
+  ggplot(to_google, aes(pmax(km, 0.01), provider_2)) +
+    geom_jitter(height = 0.15, width = 0, alpha = 0.6, aes(colour = point_set)) +
+    geom_vline(xintercept = crosscheck$agree_km, linetype = "dashed") +
+    scale_x_log10(labels = scales::label_number(accuracy = 0.1)) +
+    labs(x = "km from Google", y = NULL, colour = "Point set") +
+    theme_minimal()
+}
+```
+
+### Calibrating `agree_km`
+
+`agree_km` decides when two answers are the same place. It should sit above
+the spread of answers that clearly are the same place, and below the distances
+that mean a different place. The points both Google and an independent source
+resolved at **high** confidence give that spread.
+
+```{r}
+#| label: calibration
+#| eval: true
+
+calib <- pairs_km |> filter(independent, confidence == "high", confidence_2 == "high")
+
+if (nrow(calib) > 0) {
+  calib |>
+    group_by(`Point set` = point_set) |>
+    summarise(
+      Pairs   = n(),
+      p50     = round(quantile(km, 0.50), 1),
+      p75     = round(quantile(km, 0.75), 1),
+      p90     = round(quantile(km, 0.90), 1),
+      p95     = round(quantile(km, 0.95), 1),
+      `over 5 km`  = sum(km > 5),
+      `over 10 km` = sum(km > 10),
+      `over 25 km` = sum(km > 25),
+      .groups = "drop"
+    ) |>
+    kable(caption = "Distances between independent high-confidence answers (km)")
+} else {
+  cat("No point has high-confidence answers from two independent sources.\n")
+}
+```
+
+### Disagreements
+
+Points where two independent sources' accepted answers are more than
+`agree_km` apart. At least one of them is wrong; these are the first points to
+check by hand.
+
+```{r}
+#| label: disagreements
+#| eval: true
+
+disagree <- pairs_km |> filter(independent, km > crosscheck$agree_km)
+
+if (nrow(disagree) == 0) {
+  cat("No two independent sources disagree by more than", crosscheck$agree_km, "km.\n")
+} else {
+  disagree |>
+    arrange(desc(km)) |>
+    transmute(point_set, name, pair = paste(provider, "–", provider_2),
+              km = round(km, 1), tiers = paste(confidence, "/", confidence_2)) |>
+    kable(caption = "Independent sources more than agree_km apart")
+}
+```
+
+## Chain Simulation
+
+Every order of the providers that ran, applied to the same answers, with the
+cross-check that order would produce. This costs nothing, so the orders in
+`chains` (`config.R`) can be chosen from it. Success is the same for every
+order, since every order holds every provider; what changes is which answer is
+kept.
+
+- **From Google**: kept coordinates that cannot be published.
+- **Disagree / single-source**: kept coordinates the other sources contradict,
+  or do not confirm. Both go to review.
+
+```{r}
+#| label: chain-simulation
+#| eval: true
+
+permutations <- function(x) {
+  if (length(x) <= 1) return(list(x))
+  unlist(map(seq_along(x), \(i) map(permutations(x[-i]), \(p) c(x[i], p))),
+         recursive = FALSE)
+}
+
+sim_input <- answers |> rename(site_id = point_id)
+
+simulate <- function(order) {
+  kept <- select_chain(sim_input, order) |> crosscheck_points(sim_input)
+  tibble(
+    order           = paste(order, collapse = " → "),
+    high            = sum(kept$confidence == "high"),
+    medium          = sum(kept$confidence == "medium"),
+    low             = sum(kept$confidence == "low"),
+    `from Google`   = sum(kept$geocode_status == "google"),
+    agree           = sum(kept$crosscheck == "agree", na.rm = TRUE),
+    disagree        = sum(kept$crosscheck == "disagree", na.rm = TRUE),
+    `single-source` = sum(kept$crosscheck == "single-source", na.rm = TRUE),
+    review          = sum(needs_review(kept$confidence, kept$crosscheck))
+  )
+}
+
+sim <- map(permutations(ran), simulate) |> list_rbind()
+
+current <- map_chr(chains, \(ch) paste(ch[ch %in% ran], collapse = " → "))
+sim <- sim |>
+  mutate(set = coalesce(names(current)[match(order, current)], "")) |>
+  arrange(review, `from Google`, desc(high))
+
+sim |>
+  relocate(set) |>
+  kable(caption = "Every provider order, best first (fewest to review, then fewest from Google)")
+```
+
+## Gate Diagnostics
+
+The thresholds in `gate` were calibrated on Google's responses. If they suit
+the other providers too, accepted candidates should score near 1.00 and
+rejected-on-name ones well below the floor.
+
+```{r}
+#| label: gate-reasons
+#| eval: true
+
+audit |>
+  filter(reject_reason != "no results" | accepted) |>
+  mutate(outcome = case_when(
+    accepted ~ "accepted",
+    TRUE ~ str_extract(reject_reason,
+      "administrative-area centroid|street, river or railway|returned province|unrelated|numbered name|not the office|bounding box")
+  )) |>
+  count(provider, outcome) |>
+  pivot_wider(names_from = outcome, values_from = n, values_fill = 0) |>
+  arrange(match(provider, ran)) |>
+  kable(caption = "Every candidate seen, by outcome (the first reason given)")
+```
+
+```{r}
+#| label: gate-similarity
+#| eval: true
+#| fig-cap: "Name similarity of candidates accepted and rejected on the name, by provider. Dashed lines: similarity_floor and similarity_clean."
+
+sim_plot <- audit |>
+  filter(!is.na(similarity)) |>
+  mutate(outcome = case_when(
+    accepted ~ "accepted",
+    grepl("unrelated", reject_reason) ~ "rejected: name",
+    TRUE ~ "rejected: other"
+  ))
+
+ggplot(sim_plot, aes(similarity, provider, colour = outcome)) +
+  geom_jitter(height = 0.2, width = 0, alpha = 0.5) +
+  geom_vline(xintercept = c(gate$similarity_floor, gate$similarity_clean), linetype = "dashed") +
+  labs(x = "name similarity", y = NULL, colour = NULL) +
+  theme_minimal()
+```
+
+## Cost
+
+Requests are this run's; on a cached re-render they are all zero.
+
+```{r}
+#| label: cost
+#| eval: true
+
+stats |>
+  group_by(provider) |>
+  summarise(requests = sum(requests), cache_hits = sum(cache_hits), .groups = "drop") |>
+  arrange(match(provider, names(providers))) |>
+  left_join(tibble(provider = names(providers),
+                   `rate (s/request)` = map_dbl(providers, "rate_delay"),
+                   `cache days` = map_dbl(providers, "cache_days")),
+            by = "provider") |>
+  kable(caption = "Requests and cache hits, both workflows")
+```
+
+## Map
+
+Each open provider's accepted answers, as a layer. Google's are left out:
+its terms do not allow its coordinates on a non-Google map.
+
+```{r}
+#| label: map
+#| eval: true
+
+provider_colours <- c(grid3 = "#1b9e77", nominatim = "#d95f02",
+                      photon = "#e7298a", geonames = "#66a61e")
+pal <- colorFactor(unname(provider_colours), levels = names(provider_colours))
+
+open_points <- accepted |> filter(provider != "google")
+
+m <- leaflet(open_points) |>
+  addTiles() |>
+  addCircleMarkers(~longitude, ~latitude, group = ~provider,
+                   color = ~pal(provider), radius = 6, fillOpacity = 0.7,
+                   label = ~paste0(name, " — ", provider),
+                   popup = ~paste0("<b>", name, "</b><br>", provider, ", ", confidence,
+                                   " (rung ", resolved_at_rung, ")<br>", matched_address)) |>
+  addLegend("bottomright", pal = pal, values = ~provider, title = "Provider") |>
+  addLayersControl(overlayGroups = unique(open_points$provider),
+                   options = layersControlOptions(collapsed = FALSE))
+m
+```
+
+## Licensing and Attribution
+
+- **Google**: coordinates may be cached for 30 days and may not be published or
+  used with a non-Google map. This document shows none of them; it compares
+  against them only by distance.
+- **OpenStreetMap** (Nominatim, Photon): © OpenStreetMap contributors, ODbL.
+- **GRID3**: CC BY 4.0. GRID3 COD health facilities and settlement names, v9.0.
+- **GeoNames**: CC BY 4.0.

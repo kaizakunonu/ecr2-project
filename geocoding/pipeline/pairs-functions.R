@@ -1,7 +1,7 @@
 # Origin-destination pairs: each DPS headquarters joined to its sentinel site.
 #
 # Source after config.R and geocode-functions.R, which provide make_id(),
-# normalise_name() and the tidyverse functions used here.
+# normalise_name(), haversine_km() and the tidyverse functions used here.
 #
 # A pair is keyed by names, as the workbook lists them (network, province, dps,
 # sentinel_site), and resolved against two registries: the geocoded DPS seats
@@ -27,18 +27,6 @@ successor_provinces <- function(province) {
   NA_character_
 }
 
-#' Great-circle distance in kilometres.
-#'
-#' A straight line, not a travel distance: it is here to catch blunders (a pair
-#' hundreds of km apart within one province) and co-located pairs.
-haversine_km <- function(lat1, lon1, lat2, lon2, radius = 6371) {
-  rad  <- pi / 180
-  dlat <- (lat2 - lat1) * rad
-  dlon <- (lon2 - lon1) * rad
-  a <- sin(dlat / 2)^2 + cos(lat1 * rad) * cos(lat2 * rad) * sin(dlon / 2)^2
-  2 * radius * asin(pmin(1, sqrt(a)))
-}
-
 #' Join each pair to the coordinates of both of its points.
 #'
 #' Stops if a pair names a DPS or site missing from its registry: a new
@@ -46,7 +34,9 @@ haversine_km <- function(lat1, lon1, lat2, lon2, radius = 6371) {
 #' if a pair's DPS seat or site lies outside what its province became in 2015,
 #' which means the wrong DPS or site for that province. Pairs whose points lack
 #' coordinates are kept and marked incomplete, not dropped. The result is in
-#' chronological order of network.
+#' chronological order of network. Where the registries record where each
+#' coordinate came from (`geocode_status`), it is kept as `dps_source` and
+#' `site_source`.
 build_pairs <- function(pairs, dps, sites, co_located_km = 1) {
 
   # A network is named from the year it began ("2003_2005", "2014"), so sorting
@@ -96,13 +86,15 @@ build_pairs <- function(pairs, dps, sites, co_located_km = 1) {
     left_join(
       dps |> select(dps_id, dps_province = province, chef_lieu,
                     dps_lat = latitude, dps_lon = longitude,
-                    dps_confidence = confidence, dps_basis = point_basis),
+                    dps_confidence = confidence, dps_basis = point_basis,
+                    any_of(c(dps_source = "geocode_status"))),
       by = "dps_id"
     ) |>
     left_join(
       sites |> select(site_id, sentinel_site, site_province = province,
                       site_lat = latitude, site_lon = longitude,
-                      site_confidence = confidence),
+                      site_confidence = confidence,
+                      any_of(c(site_source = "geocode_status"))),
       by = "site_id"
     )
 

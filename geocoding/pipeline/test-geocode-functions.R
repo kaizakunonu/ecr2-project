@@ -2,13 +2,17 @@
 #
 # Run from this directory:   Rscript test-geocode-functions.R
 #
-# No API key and no network required -- every Google response used here is a
-# verbatim fixture recorded from the live API, so the gate can be exercised
-# against what the API actually returns rather than what we assume it returns.
+# No API key and no network required -- every response used here was recorded
+# from the live APIs, so the gate can be exercised against what the providers
+# actually return rather than what we assume they return. Google responses are
+# copied in as parsed rows (candidate() below); the open providers' raw
+# response bodies are stored verbatim in fixtures/ and go through the real
+# parsers.
 
 suppressMessages({
   source("config.R")
   source("geocode-functions.R")
+  source("providers.R")
   source("pairs-functions.R")
 })
 
@@ -30,6 +34,19 @@ candidate <- function(formatted_address, location_type, types, partial_match,
   )
 }
 
+#' A recorded response body from fixtures/, as the adapters receive it.
+fixture <- function(file) {
+  jsonlite::read_json(file.path("fixtures", file), simplifyVector = FALSE)
+}
+nominatim_fixture <- function(file) map(fixture(file), parse_nominatim_result) |> list_rbind()
+photon_fixture    <- function(file) map(fixture(file)$features, parse_photon_feature) |> list_rbind()
+grid3_fixture     <- function(file) parse_arcgis_rows(map(fixture(file)$features, "attributes"))
+
+#' Judge every candidate in a response; returns the list of assessments.
+assess_each <- function(cands, site, province) {
+  map(seq_len(nrow(cands)), \(j) assess_candidate(cands[j, ], site, province))
+}
+
 # ---------------------------------------------------------------------------
 section("Helpers")
 ok("normalise_name folds accents",        normalise_name("Kasaï-Central") == "kasai central")
@@ -38,6 +55,22 @@ ok("fix_site_name corrects Mwene-ditu",   fix_site_name("Mwene-ditu") == "Mwene-
 ok("similarity: exact = 1",               name_similarity("Rutshuru", "Rutshuru") == 1)
 ok("similarity: substring = 1",           name_similarity("Bolenge", "Bolenge, Republique democratique du Congo") == 1)
 ok("similarity: NA scores 0",             name_similarity("Vanga", NA) == 0)
+
+# Nominatim's answer for Nyanga, Kasaï was Bakwa-Nyanga, ~150 km from Nyanga.
+ok("the substring rule scores Bakwa-Nyanga 1 for Nyanga",
+   name_similarity("Nyanga", "Bakwa-Nyanga") == 1)
+ok("...whole names put it below the floor",
+   whole_name_similarity("Nyanga", "Bakwa-Nyanga") < gate$similarity_floor)
+ok("whole names: GRID3's Mweneditu is clean",
+   whole_name_similarity("Mwene-Ditu", "Mweneditu") >= gate$similarity_clean)
+ok("whole names: vectorised, NA scores 0",
+   identical(whole_name_similarity("Vanga", c("Vanga", NA)), c(1, 0)))
+ok("number tokens read digits",           identical(number_tokens("Maluku 2"), 2L))
+ok("...and roman numerals",               identical(number_tokens("Maluku I"), 1L))
+ok("...and nothing else",                 length(number_tokens("Mwene-Ditu")) == 0)
+ok("Maluku 1 and Maluku 2 conflict",      numbers_conflict("Maluku 1", "Maluku 2"))
+ok("Maluku 1 and Maluku I do not",        !numbers_conflict("Maluku 1", "Maluku I"))
+ok("an unnumbered name does not conflict", !numbers_conflict("Maluku 1", "Maluku"))
 
 # ---------------------------------------------------------------------------
 section("Province validation")
@@ -132,6 +165,11 @@ ok("site-name fix flows into queries",
 ok("accented provinces pass through",
    grepl("administrative_area:Kasaï", build_query_variants("Mikalayi", "Kasaï")$components[1]))
 ok("rung labels name the province",       v$rung_label[1] == "1: health zone + province (Kwilu)")
+ok("rungs carry pinned for other providers", identical(v$pinned, c(TRUE, TRUE, FALSE, FALSE)))
+ok("rung 1 looks for a health zone",      v$target[1] == "health_zone" && all(v$target[2:4] == "settlement"))
+ok("rungs carry the fixed name and the province",
+   all(build_query_variants("Mwene-ditu", "Lomami")$name == "Mwene-Ditu") &&
+     all(v$province == "Kwilu"))
 
 d <- build_query_variants("Kananga", "Kasaï-Central", ladder = ladders$dps)
 ok("DPS ladder is 4 rungs",               nrow(d) == 4 && identical(d$rung, 1:4))
@@ -140,6 +178,7 @@ ok("DPS rung 2 falls back to the town",   d$address[2] == "Kananga")
 ok("DPS rungs 1-2 pin the province",
    all(d$components[1:2] == "country:CD|administrative_area:Kasaï-Central"))
 ok("DPS rungs 3-4 are country-only",      all(d$components[3:4] == "country:CD"))
+ok("DPS rung 1 looks for an office",      d$target[1] == "office")
 ok("apostrophes survive templating",
    build_query_variants("N'Gandajika", "Lomami")$address[1] == "Zone de Sante de N'Gandajika")
 
@@ -310,16 +349,371 @@ ok("a transposed spelling is accepted",   a_wai$accepted)
 ok("...but only at LOW confidence",       confidence_tier(a_wai, 1) == "low")
 
 # ---------------------------------------------------------------------------
+section("Google kind: every recorded Google response")
+
+# The gate now rejects by kind. For Google, kind must reproduce exactly what
+# the old rules decided on every response recorded above.
+google_cases <- list(
+  list(bolenge, "settlement"), list(rutshuru, "settlement"),
+  list(mikalayi_poi, "establishment"), list(kingasani, "establishment"),
+  list(kc_office, "area"), list(lualaba, "settlement"),
+  list(kin_office, "settlement"), list(kananga, "settlement"),
+  list(maluku, "other"), list(niemba, "establishment"), list(waine, "settlement")
+)
+ok("google_kind matches every recorded Google response",
+   all(map_lgl(google_cases, \(x) google_kind(x[[1]]$location_type, x[[1]]$types) == x[[2]])))
+ok("a province centroid is an area",
+   google_kind("APPROXIMATE", "administrative_area_level_1|political") == "area")
+ok("a non-APPROXIMATE admin result is not an area",
+   google_kind("GEOMETRIC_CENTER", "administrative_area_level_2|political") != "area")
+ok("a Google route is linear",            google_kind("GEOMETRIC_CENTER", "route") == "linear")
+ok("Google candidates are completed with the new columns",
+   identical(names(complete_google_candidates(bolenge)), names(empty_candidates())) &&
+     complete_google_candidates(bolenge)$kind == "settlement")
+
+# ---------------------------------------------------------------------------
+section("Nominatim: regressions from real API responses")
+
+mik_n <- nominatim_fixture("nominatim_mikalayi_structured.json")
+ok("the parser fills the shared schema",  identical(names(mik_n), names(empty_candidates())))
+ok("Mikalayi parses as a village in Kasaï-Central",
+   mik_n$kind == "settlement" && mik_n$admin1 == "Kasaï-Central" && mik_n$name == "Mikalayi")
+ok("an OSM id is prefixed, never a bare Google-like id", startsWith(mik_n$place_id, "osm:node/"))
+a_mik_n <- assess_candidate(mik_n, "Mikalayi", "Kasaï-Central")
+ok("Google's failure Mikalayi is found and accepted", a_mik_n$accepted)
+ok("...at HIGH confidence on the pinned rung", confidence_tier(a_mik_n, 2) == "high")
+
+mik_free <- nominatim_fixture("nominatim_mikalayi_free.json")
+ok("OSM's Mikalayi health zone parses as an area", mik_free$kind[2] == "area")
+ok("...and is REJECTED as a centroid",
+   grepl("administrative-area centroid", assess_candidate(mik_free[2, ], "Mikalayi", "Kasaï-Central")$reject_reason))
+
+# Structured query city=Nyanga, state=Kasaï: the village of Bakwa-Nyanga.
+bakwa <- nominatim_fixture("nominatim_nyanga_structured.json")
+a_bakwa <- assess_candidate(bakwa, "Nyanga", "Kasaï")
+ok("Bakwa-Nyanga, in the right province, is REJECTED", bakwa$admin1 == "Kasaï" && !a_bakwa$accepted)
+ok("...on the name",                      grepl("unrelated", a_bakwa$reject_reason))
+
+nyanga_n <- nominatim_fixture("nominatim_nyanga_free.json")
+ok("no free-text Nyanga is accepted for Kasaï",
+   !any(map_lgl(assess_each(nyanga_n, "Nyanga", "Kasaï"), "accepted")))
+ok("...its only Kasaï hit is the health-zone polygon",
+   identical(nyanga_n$kind[normalise_name(nyanga_n$admin1) == "kasai"], "area"))
+
+manika_n <- assess_each(nominatim_fixture("nominatim_manika_free.json"), "Manika", "Lualaba")
+ok("Manika the Kalemie neighbourhood is REJECTED on the province",
+   grepl("Tanganyika", manika_n[[1]]$reject_reason))
+ok("Manika the Lualaba health zone is REJECTED as a centroid",
+   grepl("centroid", manika_n[[2]]$reject_reason))
+
+nyemba_n <- nominatim_fixture("nominatim_nyemba_free.json")
+a_nye <- assess_each(nyemba_n, "Nyemba", "Tanganyika")
+ok("Google's failure Nyemba is found as a town", a_nye[[1]]$accepted && nyemba_n$kind[1] == "settlement")
+ok("the Nyemba river is REJECTED as linear, though name and province match",
+   nyemba_n$kind[2] == "linear" && !a_nye[[2]]$accepted &&
+     !grepl("unrelated|province", a_nye[[2]]$reject_reason))
+
+mwene_n <- nominatim_fixture("nominatim_mwene_ditu_free.json")
+a_mwe <- assess_each(mwene_n, "Mwene-ditu", "Lomami")
+ok("Mwene-Ditu's health-zone polygons are REJECTED", !a_mwe[[1]]$accepted && !a_mwe[[2]]$accepted)
+ok("the Kinshasa streets named Mwene Ditu are REJECTED",
+   all(mwene_n$kind[3:4] == "linear") && !a_mwe[[3]]$accepted && !a_mwe[[4]]$accepted)
+ok("the Mwene-Ditu railway station is accepted, as a building in the town",
+   a_mwe[[5]]$accepted && mwene_n$kind[5] == "establishment")
+
+kan_n <- nominatim_fixture("nominatim_kananga_structured.json")
+ok("the DPS chef-lieu Kananga is a city, accepted",
+   kan_n$kind == "settlement" && assess_candidate(kan_n, "Kananga", "Kasaï-Central")$accepted)
+
+# ---------------------------------------------------------------------------
+section("Photon: regressions from real API responses")
+
+mik_p <- photon_fixture("photon_mikalayi.json")
+a_mik_p <- assess_each(mik_p, "Mikalayi", "Kasaï-Central")
+ok("the parser fills the shared schema",  identical(names(mik_p), names(empty_candidates())))
+ok("Photon's 'Kasaï Central' passes the province check", mik_p$admin1[1] == "Kasaï Central" && a_mik_p[[1]]$province_match)
+ok("Mikalayi village is accepted",        a_mik_p[[1]]$accepted)
+ok("its health-zone polygon is REJECTED", mik_p$kind[2] == "area" && !a_mik_p[[2]]$accepted)
+ok("a cathedral named after Mikalayi is REJECTED on the whole name",
+   !a_mik_p[[3]]$accepted && grepl("unrelated", a_mik_p[[3]]$reject_reason))
+ok("Photon's loose matches (Mitala, Mikala) are all REJECTED",
+   !any(map_lgl(a_mik_p[4:8], "accepted")))
+ok("Photon ids use OSM's element names", startsWith(mik_p$place_id[1], "osm:node/"))
+
+nye_p <- photon_fixture("photon_nyemba.json")
+a_nye_p <- assess_each(nye_p, "Nyemba", "Tanganyika")
+ok("Nyemba town is accepted, and only it",
+   identical(which(map_lgl(a_nye_p, "accepted")), 1L))
+ok("...six river segments REJECTED as linear", sum(nye_p$kind == "linear") == 6)
+
+mwe_p <- photon_fixture("photon_mwene_ditu.json")
+ok("no Photon Mwene-Ditu is accepted: streets, polygons and the airport",
+   !any(map_lgl(assess_each(mwe_p, "Mwene-ditu", "Lomami"), "accepted")))
+
+# DPS rung 1, the office query, as Photon answered it for two provinces.
+office_q <- \(p) build_query_variants("x", p, ladder = ladders$dps)$address[1]
+hk_p <- photon_fixture("photon_dps_office_haut_katanga.json")
+a_hk <- map(seq_len(nrow(hk_p)), \(j) assess_candidate(hk_p[j, ], "Lubumbashi", "Haut-Katanga",
+                                                       office = office_q("Haut-Katanga")))
+church <- which(hk_p$name == "Eglise catholique Sainte Elisabeth")
+ok("a church in Lubumbashi passes on the town alone",
+   assess_candidate(hk_p[church, ], "Lubumbashi", "Haut-Katanga")$accepted)
+ok("...but is REJECTED as the answer to the office query",
+   !a_hk[[church]]$accepted && grepl("not the office", a_hk[[church]]$reject_reason))
+ok("no Haut-Katanga answer is taken for the DPS office", !any(map_lgl(a_hk, "accepted")))
+nk_p <- photon_fixture("photon_dps_office_nord_kivu.json")
+a_nk <- assess_candidate(nk_p, "Goma", "Nord-Kivu", office = office_q("Nord-Kivu"))
+ok("Goma's 'Division Provinciale de la Santé' is accepted as the office",
+   a_nk$accepted && nk_p$kind == "establishment")
+ok("Google's unnamed buildings are not held to the office name",
+   assess_candidate(kingasani, "Kinshasa", "Kinshasa", office = office_q("Kinshasa"))$accepted)
+
+# ---------------------------------------------------------------------------
+section("GRID3: regressions from real API responses")
+
+bcz <- grid3_fixture("grid3_bcz_subset.json")
+ok("the BCZ rows parse",                  nrow(bcz) == 5 && all(c("zonesante", "lat") %in% names(bcz)))
+
+mik_g <- grid3_match_bcz("Mikalayi", "Kasaï-Central", bcz)
+ok("Google's failure Mikalayi has a BCZ", nrow(mik_g) == 1 && mik_g$kind == "establishment")
+ok("...accepted at HIGH on rung 1",
+   confidence_tier(assess_candidate(mik_g, "Mikalayi", "Kasaï-Central"), 1) == "high")
+ok("...about 1.5 km from OSM's Mikalayi village",
+   abs(haversine_km(mik_g$lat, mik_g$lon, mik_n$lat, mik_n$lon) - 1.4) < 0.3)
+ok("a BCZ in another province is not returned", nrow(grid3_match_bcz("Mikalayi", "Kasaï", bcz)) == 0)
+
+mal_g <- grid3_match_bcz("Maluku 1", "Kinshasa", bcz)
+a_mal_g <- assess_each(mal_g, "Maluku 1", "Kinshasa")
+ok("Maluku 1 comes before Maluku 2",      identical(mal_g$name, c("Maluku 1", "Maluku 2")))
+ok("BCZ Maluku 1 is accepted",            a_mal_g[[1]]$accepted)
+ok("BCZ Maluku 2, 70 km away, is REJECTED on its number",
+   !a_mal_g[[2]]$accepted && grepl("numbered name", a_mal_g[[2]]$reject_reason) &&
+     haversine_km(mal_g$lat[1], mal_g$lon[1], mal_g$lat[2], mal_g$lon[2]) > 60)
+ok("...though its similarity clears the floor", a_mal_g[[2]]$similarity >= gate$similarity_floor)
+
+mwe_g <- grid3_match_bcz("Mwene-ditu", "Lomami", bcz)
+ok("GRID3's 'Mweneditu' is found for Mwene-ditu", nrow(mwe_g) == 2)
+ok("...its two rows 30 m apart are one place", count_distinct_places(mwe_g) == 1L)
+
+nyemba_g <- grid3_fixture("grid3_settlements_tanganyika_nyemba.json")
+ok("GRID3 has five Nyemba villages in Tanganyika (two numbered)",
+   sum(str_detect(normalise_name(nyemba_g$localite), "^nyemba( [0-9]+)?$")) == 5)
+ok("...none in health zone Nyemba, so none is returned",
+   nrow(grid3_match_settlement("Nyemba", "Tanganyika", nyemba_g)) == 0)
+
+vanga_g <- grid3_fixture("grid3_settlements_kwilu_vanga.json")
+v_g <- grid3_match_settlement("Vanga", "Kwilu", vanga_g)
+ok("Vanga is found inside health zone Vanga", nrow(v_g) == 1 && v_g$admin2 == "Vanga")
+ok("...not the Vanga village of Idiofa",  !"Idiofa" %in% v_g$admin2)
+ok("...nor Vanga Mission or Vanga Cité",  identical(v_g$name, "Vanga"))
+ok("a GRID3 village or bloc is a settlement, an avenue linear",
+   identical(grid3_settlement_kind(c("Village", "Quaŕtier", "Bloc", "Avenue", "Autre")),
+             c("settlement", "settlement", "settlement", "linear", "other")))
+
+# Health zone Kalima: its one "Kalima" is an avenue; the villages Kalema and
+# Kalimu score 0.83 and are other places, several km from Kalima town.
+kalima_g <- grid3_fixture("grid3_settlements_maniema_kalima.json")
+k_g <- grid3_match_settlement("Kalima", "Maniema", kalima_g)
+ok("near-named villages in the health zone are not returned",
+   !any(c("Kalema", "Kalimu") %in% k_g$name) &&
+     whole_name_similarity("Kalima", "Kalema") >= gate$similarity_floor)
+ok("...only the exact name, here an avenue",  identical(k_g$name, "Kalima") && k_g$kind == "linear")
+ok("...which the gate then refuses",          !assess_candidate(k_g, "Kalima", "Maniema")$accepted)
+
+free_rung <- build_query_variants("Vanga", "Kwilu")[4, ]
+ok("GRID3 answers no free-text rung",     geocode_grid3(free_rung)$n_results == 0)
+
+# ---------------------------------------------------------------------------
+section("Ladder walk, replaying recorded responses")
+
+#' A provider that answers each rung with a recorded response, and remembers
+#' which rungs it was asked.
+replay <- function(by_rung) {
+  asked <- integer(0)
+  fetch <- function(q, profile) {
+    asked <<- c(asked, q$rung)
+    as_response(by_rung[[as.character(q$rung)]])
+  }
+  list(fetch = fetch, asked = function() asked)
+}
+
+nom_nyanga <- replay(list("2" = bakwa, "4" = nyanga_n))
+r_nyanga <- geocode_site("DRC-NYANGA", "Nyanga", "Kasaï", provider = "nominatim",
+                         fetch = nom_nyanga$fetch)
+ok("Nominatim skips the health-zone rung", identical(nom_nyanga$asked(), c(2L, 3L, 4L)))
+ok("Nyanga fails on Nominatim",           r_nyanga$result$geocode_status == "failed")
+ok("...with the provider on the failed row", r_nyanga$result$provider == "nominatim")
+ok("...and every candidate in the audit", nrow(r_nyanga$audit) == 1 + 1 + 5 &&
+     all(r_nyanga$audit$provider == "nominatim"))
+ok("...including why each was refused",
+   any(grepl("unrelated", r_nyanga$audit$reject_reason)) &&
+     any(grepl("centroid", r_nyanga$audit$reject_reason)))
+
+nom_mik <- replay(list("2" = mik_n))
+r_mik <- geocode_site("DRC-MIKALAYI", "Mikalayi", "Kasaï-Central", provider = "nominatim",
+                      fetch = nom_mik$fetch)$result
+ok("Mikalayi resolves on Nominatim's rung 2", r_mik$resolved_at_rung == 2 && r_mik$confidence == "high")
+ok("...stamped with the provider",        r_mik$geocode_status == "nominatim" && r_mik$provider == "nominatim")
+ok("...and its kind and own name",        r_mik$matched_kind == "settlement" && r_mik$matched_name == "Mikalayi")
+ok("the ladder stops at the first acceptance", identical(nom_mik$asked(), 2L))
+
+ggl <- replay(list())
+geocode_site("DRC-MIKALAYI", "Mikalayi", "Kasaï-Central", provider = "google", fetch = ggl$fetch)
+ok("Google runs all four rungs",          identical(ggl$asked(), 1:4))
+grid_dps <- replay(list())
+geocode_site("DRC-DPS-KWILU", "Bandundu", "Kwilu", point_set = "dps", provider = "grid3",
+             fetch = grid_dps$fetch)
+ok("GRID3 runs only the DPS chef-lieu rung", identical(grid_dps$asked(), 2L))
+
+# GRID3 through its real adapter logic, on the recorded tables.
+grid3_replay <- function(q, profile) {
+  if (!isTRUE(q$pinned)) return(as_response(NULL))
+  as_response(switch(q$target,
+                     health_zone = grid3_match_bcz(q$name, q$province, bcz),
+                     settlement  = grid3_match_settlement(q$name, q$province, vanga_g),
+                     NULL))
+}
+r_mal <- geocode_site("DRC-MALUKU-1", "Maluku 1", "Kinshasa", provider = "grid3",
+                      fetch = grid3_replay)$result
+ok("Google's failure Maluku 1 resolves to its BCZ",
+   r_mal$geocode_status == "grid3" && r_mal$resolved_at_rung == 1 &&
+     abs(r_mal$latitude - -4.065825) < 1e-6)
+r_mwe <- geocode_site("DRC-MWENE-DITU", "Mwene-ditu", "Lomami", provider = "grid3",
+                      fetch = grid3_replay)$result
+ok("a duplicated BCZ raises no ambiguity flag",
+   r_mwe$n_results == 2 && r_mwe$confidence == "high" && !grepl("distinct", r_mwe$quality_flags))
+r_van <- geocode_site("DRC-VANGA", "Vanga", "Kwilu", provider = "grid3", fetch = grid3_replay)$result
+ok("Vanga, which has no BCZ here, resolves on the settlement rung", r_van$resolved_at_rung == 2)
+
+both <- geocode_point_all("DRC-MIKALAYI", "Mikalayi", "Kasaï-Central",
+                          use = c("google", "grid3", "nominatim"),
+                          fetchers = list(google = replay(list())$fetch,
+                                          grid3 = grid3_replay,
+                                          nominatim = replay(list("2" = mik_n))$fetch))
+ok("every provider answers every point",  identical(both$by_provider$provider, c("google", "grid3", "nominatim")))
+ok("...independently",                    identical(both$by_provider$geocode_status, c("failed", "grid3", "nominatim")))
+ok("the audit records which provider saw what", setequal(unique(both$audit$provider), c("google", "grid3", "nominatim")))
+
+# ---------------------------------------------------------------------------
+section("Provider chains and the cross-check")
+
+# Mikalayi as the providers answered it, plus Photon's (same) village.
+mik_photon <- both$by_provider[3, ] |> mutate(provider = "photon", geocode_status = "photon")
+mik_all <- bind_rows(both$by_provider, mik_photon)
+
+g_first <- select_chain(mik_all, chains$google_first)
+o_first <- select_chain(mik_all, chains$open_first)
+ok("google_first falls through Google's failure to GRID3", g_first$geocode_status == "grid3")
+ok("open_first starts with GRID3",        o_first$geocode_status == "grid3")
+ok("a chain keeps one row per point",     nrow(g_first) == 1)
+osm_only <- select_chain(mik_all, c("photon", "nominatim"))
+ok("a chain respects its own order",      osm_only$geocode_status == "photon")
+ok("a point no provider in the chain resolved keeps a failed row, without a provider",
+   select_chain(mik_all, "google")$geocode_status == "failed" &&
+     is.na(select_chain(mik_all, "google")$provider))
+ok("providers absent from the results are ignored", nrow(select_chain(mik_all, c("geonames", "grid3"))) == 1)
+
+x_grid <- crosscheck_points(g_first, mik_all)
+ok("GRID3 and OSM agree on Mikalayi",     x_grid$crosscheck == "agree")
+ok("...Nominatim and Photon count as one family", x_grid$n_sources_agree == 1L)
+ok("...the note lists every distance",    grepl("nominatim 1.4 km", x_grid$crosscheck_note) &&
+     grepl("photon 1.4 km", x_grid$crosscheck_note))
+
+x_osm <- crosscheck_points(select_chain(mik_all, c("nominatim")), mik_all |> filter(provider != "grid3"))
+ok("Photon alone does not confirm Nominatim: single-source", x_osm$crosscheck == "single-source")
+x_fail <- crosscheck_points(select_chain(mik_all, "google"), mik_all)
+ok("a failed point has no cross-check",   is.na(x_fail$crosscheck))
+
+# Disagreement: Nyemba town (Nominatim) against a point 80 km off, at the
+# Kalemie village of the same name.
+nye_rows <- tibble(site_id = "DRC-NYEMBA", provider = c("nominatim", "grid3"),
+                   latitude = c(nyemba_n$lat[1], -5.942532), longitude = c(nyemba_n$lon[1], 29.177019),
+                   geocode_status = c("nominatim", "grid3"))
+x_dis <- crosscheck_points(select_chain(nye_rows, "nominatim"), nye_rows)
+ok("an answer 80 km away is a disagreement", x_dis$crosscheck == "disagree" && x_dis$max_disagreement_km > 80)
+ok("...which never touches confidence",   !"confidence" %in% setdiff(names(x_dis), names(nye_rows)))
+
+pinned <- g_first |> mutate(geocode_status = "manual", confidence = "manual",
+                            latitude = mik_n$lat, longitude = mik_n$lon)
+x_pin <- crosscheck_points(pinned, mik_all)
+ok("a manual pin is checked against every provider",
+   x_pin$crosscheck == "agree" && x_pin$n_sources_agree == 2L)
+
+ok("review: anything below high",         needs_review("medium", "agree"))
+ok("review: a disagreement, even if high", needs_review("high", "disagree"))
+ok("review: an unconfirmed point",        needs_review("high", "single-source"))
+ok("review: not a confirmed high",        !needs_review("high", "agree"))
+ok("review: not an uncontradicted pin",   !needs_review("manual", "single-source"))
+ok("review: a contradicted pin",          needs_review("manual", "disagree"))
+ok("review: a failure",                   needs_review("failed", NA))
+
+# ---------------------------------------------------------------------------
+section("Provider configuration")
+ok("every provider has an adapter",       setequal(names(providers), names(provider_fetchers)))
+ok("chains name only known providers",    all(unlist(chains) %in% names(providers)))
+ok("both chains hold every provider",     all(map_lgl(chains, \(ch) setequal(ch, names(providers)))))
+ok("open_first puts Google last",         tail(chains$open_first, 1) == "google")
+ok("every provider says which rungs it skips, per point set",
+   all(map_lgl(providers, \(p) setequal(names(p$skip_rungs), names(ladders)))))
+ok("Nominatim and Photon are one family", provider_family("nominatim") == provider_family("photon"))
+ok("a manual pin has no family",          is.na(provider_family("manual")))
+ok("GeoNames is off until it has a username", !"geonames" %in% enabled_providers())
+ok("the GeoNames table covers the 26 provinces",
+   setequal(normalise_name(names(geonames_admin1)), normalise_name(drc_provinces)) &&
+     !anyDuplicated(geonames_admin1))
+ok("credential_status reports without stopping",
+   is.data.frame(credential_status(c("google", "grid3"))) &&
+     credential_status("grid3")$set)
+ok("province_bbox gives a province's extent",
+   all(abs(province_bbox("Bas-Uele", pad = 0) - c(22.45, 1.95, 27.70, 5.40)) < 1e-9))
+
+# ---------------------------------------------------------------------------
 section("Response cache")
-tmp <- tempfile(fileext = ".rds")
+tmp <- tempfile()
+dir.create(tmp)
 cache_load(tmp)
-ok("empty cache starts empty",            is.null(cache_get("Vanga", "country:CD")))
-cache_put("Vanga", "country:CD", list(status = "OK", n_results = 1L))
-ok("cache_get returns what was stored",   cache_get("Vanga", "country:CD")$status == "OK")
-ok("the key includes components",         is.null(cache_get("Vanga", "country:CD|administrative_area:Kwilu")))
+k <- cache_key("Vanga", "country:CD")
+ok("the Google key is still address|components", k == "Vanga|country:CD")
+ok("empty cache starts empty",            is.null(cache_get(k)))
+cache_put(k, list(status = "OK", n_results = 1L))
+ok("cache_get returns what was stored",   cache_get(k)$status == "OK")
+ok("the key includes components",         is.null(cache_get(cache_key("Vanga", "country:CD|administrative_area:Kwilu"))))
+ok("each provider has its own store",     is.null(cache_get(k, "nominatim")))
 cache_save(); cache_load(tmp)
-ok("cache survives save and reload",      cache_get("Vanga", "country:CD")$n_results == 1L)
-unlink(tmp)
+ok("cache survives save and reload",      cache_get(k)$n_results == 1L)
+ok("...in one file per provider",         file.exists(file.path(tmp, "google_geocode_cache.rds")))
+ok("only stores that changed are written", !file.exists(file.path(tmp, "photon_geocode_cache.rds")))
+
+aged <- .geocode_cache$stores$google[[k]]
+aged$cached_at <- Sys.time() - 31 * 86400
+.geocode_cache$stores$google[[k]] <- aged
+cache_put(k, list(status = "OK"), "nominatim")
+.geocode_cache$stores$nominatim[[k]]$cached_at <- Sys.time() - 365 * 86400
+ok("a Google answer older than 30 days has expired", is.null(cache_get(k, "google")))
+ok("a year-old Nominatim answer has not", !is.null(cache_get(k, "nominatim")))
+
+legacy <- file.path(tmp, "google_geocode_cache.rds")
+saveRDS(list(old = list(status = "OK", n_results = 1L)), legacy)
+Sys.setFileTime(legacy, Sys.time() - 40 * 86400)
+cache_load(tmp)
+ok("an entry without a timestamp takes the file's time",
+   abs(as.numeric(difftime(.geocode_cache$stores$google$old$cached_at,
+                           Sys.time() - 40 * 86400, units = "hours"))) < 1)
+ok("...and so expires with it",           is.null(cache_get("old")))
+
+n_fetch <- 0
+fetch_once <- function() { n_fetch <<- n_fetch + 1; list(status = "OK") }
+cached_fetch("photon", "q=Vanga", fetch_once); cached_fetch("photon", "q=Vanga", fetch_once)
+ok("a cached answer is not fetched again", n_fetch == 1)
+stats <- cache_stats()
+ok("...and counts as a hit",              stats$cache_hits[stats$provider == "photon"] == 1)
+ok("a provider without a credential needs none", is.na(provider_credential("photon")))
+old_username <- Sys.getenv("GEONAMES_USERNAME", NA)
+Sys.unsetenv("GEONAMES_USERNAME")
+ok("a missing credential stops the request that needs it",
+   inherits(try(provider_credential("geonames"), silent = TRUE), "try-error"))
+if (!is.na(old_username)) Sys.setenv(GEONAMES_USERNAME = old_username)
+unlink(tmp, recursive = TRUE)
 
 # ---------------------------------------------------------------------------
 section("Manual overrides")
