@@ -1,0 +1,602 @@
+---
+title: "Walking travel time from DPS to sentinel sites, DRC"
+subtitle: "Sentinel network: `r params$network` sites"
+author: "MAP East Africa Node, Data Engineering Team"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  network: "11"
+  shp_path: "RDC_11_provinces_1988_2015/RDC_11_provinces_1988_2015.shp"
+  data_dir: "output"
+  buffer_km: 50
+  cap_hours: 72
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    theme: flatly
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 10, fig.height = 9, dpi = 150)
+```
+
+
+# How to use this document {-}
+
+This R Markdown file analyses the historical 11-site
+sentinel network (2003–2005), using the historical
+11-province boundaries of the DRC.
+
+To run the analysis:
+
+```r
+rmarkdown::render(
+  "DRC_walking_travel_time_historical_11.Rmd",
+  params = list(network = "11"),
+  output_file = "DRC_walking_tt_historical_11.html"
+)
+```
+
+For the 26- and 52-site networks, use Christina's
+original R Markdown file with the GRID3 v9.0
+health-zone shapefile representing the current
+26 provinces.
+
+
+**Input files expected** in the `output/` folder, one pair per network:
+
+| File | Required columns |
+|---|---|
+| `dps_<network>.csv` | `dps_province`, `latitude`, `longitude` |
+| `ss_<network>.csv` | `sentinel_site`, `latitude`, `longitude` |
+
+**The two files must be in the same row order.** Row 1 of the DPS file is the DPS responsible for the site in row 1 of the sentinel-site file, and so on. If one DPS supervises two sites (likely in the 52-site network), repeat that DPS on two rows.
+
+**First run is slow.** The friction surface download and the transition layer take time and memory. Both are saved to disk the first time and reused automatically for later networks, because the landscape does not change between networks; only the points do.
+
+---
+
+# Background and question
+
+We want to know **how long it would take to walk from each Provincial Health Division (DPS) office to the sentinel site it is responsible for**, and more broadly, how far each part of the country is from the nearest DPS.
+
+This matters for supervision visits, sample transport and supply delivery. It also tells us whether sentinel sites were chosen mainly because they were easy to reach, which affects how representative they are of malaria transmission in remote areas.
+
+**Method in one paragraph.** We use the Malaria Atlas Project's 2020 **walking-only friction surface**: a grid (about 1 km cells) where each cell holds the time in minutes needed to walk one metre through it, based on land cover, terrain, roads and water. We convert this grid into a network of connections between neighbouring cells, and then find the fastest walking route between points with a shortest-path algorithm (Dijkstra) using the `gdistance` package. This is the same approach used by Weiss et al. for global travel-time-to-healthcare maps, and by Longbottom et al. (2020) for tsetse monitoring in Uganda.
+
+---
+
+# Setup
+
+```{r packages}
+library(sf)
+library(dplyr)
+library(readr)
+library(raster)        # gdistance only works with 'raster' objects
+library(gdistance)
+library(malariaAtlas)
+library(ggplot2)
+library(ggrepel)
+library(ggspatial)
+library(flextable)
+library(knitr)
+# Note: we call terra functions as terra::... rather than library(terra),
+# because terra and raster both have functions called extract(), mask(), crop().
+
+net     <- params$network
+cap_h   <- params$cap_hours
+out_dir <- file.path(params$data_dir, paste0("network_", net))
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+---
+
+# Data and first checks
+
+## Read the DPS and sentinel-site coordinates
+
+```{r read-points}
+dps_raw <- read_csv(file.path(params$data_dir, paste0("dps_", net, ".csv")),
+                    show_col_types = FALSE)
+ss_raw  <- read_csv(file.path(params$data_dir, paste0("ss_", net, ".csv")),
+                    show_col_types = FALSE)
+
+stopifnot("DPS and sentinel-site files must have the same number of rows" =
+            nrow(dps_raw) == nrow(ss_raw))
+```
+
+## Remove missing coordinates, keeping the pairs together
+
+> **Why this matters.** If we removed missing rows from each file separately, one file could lose a row the other keeps. Every pair after that point would be shifted by one, and nothing would warn us. So we drop a row from **both** files whenever **either** side is missing.
+
+```{r drop-missing}
+keep <- !is.na(dps_raw$latitude) & !is.na(dps_raw$longitude) &
+        !is.na(ss_raw$latitude)  & !is.na(ss_raw$longitude)
+
+dropped <- data.frame(DPS = dps_raw$dps_province[!keep],
+                      Sentinel_site = ss_raw$sentinel_site[!keep])
+
+dps <- dps_raw[keep, ]
+ss  <- ss_raw[keep, ]
+n_pairs <- nrow(dps)
+
+if (nrow(dropped) > 0) kable(dropped, caption = "Pairs dropped for missing coordinates")
+```
+
+**`r n_pairs` DPS-to-site pairs** are used in this analysis (`r nrow(dropped)` dropped for missing coordinates).
+
+---
+
+# Boundaries and buffer
+
+
+## Province boundaries
+
+For the historical sentinel network (2003–2005), we use
+the 11 provinces of the DRC that existed before the
+2015 administrative reorganisation.
+
+The shapefile already contains the 11 provincial
+boundaries, so there is no need to merge health zones.
+
+```{r boundaries}
+# Read the historical 11-province shapefile
+drc.shp <- st_read(params$shp_path, quiet = TRUE)
+
+# Prepare the provincial boundaries
+drc.prov <- drc.shp %>%
+  st_make_valid() %>%
+  rename(province = PROVINCE)
+
+# Confirm that there are 11 provinces
+stopifnot(nrow(drc.prov) == 11)
+
+# Display the historical province names
+print(drc.prov$province)
+
+# Check whether DPS province names match
+name_mismatch <- setdiff(
+  unique(dps$dps_province),
+  drc.prov$province
+)
+
+print(name_mismatch)
+```
+
+> Historical province names should be used for mapping and
+> reporting the 2003–2005 sentinel network. Differences in
+> province names do not affect the geographical coordinates
+> used to calculate walking travel times.
+
+
+## Buffer around the country
+
+> **Why a buffer?** The routing can only use cells inside the friction raster. Anything outside behaves like a solid wall. Several DPS and sites (Goma, Bukavu, Kinshasa, Matadi) sit right on international borders or lake shores. If we cut the raster exactly at the border, some of these points could fall on an empty cell and return infinite travel time. A `r params$buffer_km` km buffer keeps them safely inside the grid.
+>
+> Note: with longitude/latitude data, `st_buffer()` distances are in **metres**, so 50 km is written as 50000.
+
+```{r buffer}
+drc.buffer <- st_buffer(st_union(drc.prov), dist = params$buffer_km * 1000)
+```
+
+---
+
+# Friction surface
+
+```{r friction}
+fric_file <- file.path(params$data_dir, "friction_walk_drc_buffer.tif")
+
+if (file.exists(fric_file)) {
+  friction.walk <- terra::rast(fric_file)
+} else {
+  friction.walk <- malariaAtlas::getRaster(
+    dataset_id = "Explorer__2020_walking_only_friction_surface",
+    shp = st_as_sf(drc.buffer)
+  )
+  terra::writeRaster(friction.walk, fric_file, overwrite = TRUE)
+}
+
+# getRaster returns a terra 'SpatRaster'; gdistance needs a 'raster' RasterLayer
+friction.walk.raster <- raster::raster(friction.walk)
+```
+
+**How to read the values.** Units are **minutes per metre**. A value of 0.012 means 12 minutes per km, which is **5 km/h**, normal walking speed on a road or open ground. Higher values mean slower walking (forest, swamp, steep slopes).
+
+---
+
+# Transition layer
+
+```{r transition}
+trans_file <- file.path(params$data_dir, "transition_walk_drc_gc.rds")
+
+if (file.exists(trans_file)) {
+  trans.walk.gc <- readRDS(trans_file)
+} else {
+  trans.walk <- gdistance::transition(
+    friction.walk.raster,
+    transitionFunction = function(x) 1 / mean(x),
+    directions = 8
+  )
+  trans.walk.gc <- gdistance::geoCorrection(trans.walk, type = "c")
+  saveRDS(trans.walk.gc, trans_file)
+}
+```
+
+**What these two steps do, in plain language:**
+
+- **`transition()`** turns "how hard is each cell to walk through" into "how easy is it to move from one cell to its neighbour". For each pair of neighbouring cells it averages their friction and takes the inverse (`1 / mean(x)`), because `gdistance` works with *ease* of movement (conductance), not cost. `directions = 8` allows moves to all eight neighbours, including diagonals, which gives more realistic routes than four directions.
+- **`geoCorrection()`** accounts for distance. A diagonal step is longer than a straight step, and in longitude/latitude, cells get narrower away from the equator. Without this, travel times would be wrong.
+
+This layer depends only on the landscape, so it is built once and reused for all three networks.
+
+---
+
+# Origins and destinations
+
+```{r points}
+origins <- cbind(dps$longitude, dps$latitude)        # longitude FIRST (x), then latitude (y)
+rownames(origins) <- dps$dps_province
+
+dest <- cbind(ss$longitude, ss$latitude)
+rownames(dest) <- ss$sentinel_site
+
+# Does every point sit on a valid friction cell?
+cell_check <- data.frame(
+  Point    = c(paste("DPS", dps$dps_province), ss$sentinel_site),
+  Friction = c(raster::extract(friction.walk.raster, origins),
+               raster::extract(friction.walk.raster, dest))
+)
+bad_cells <- cell_check[is.na(cell_check$Friction), ]
+if (nrow(bad_cells) > 0) kable(bad_cells, caption = "Points on EMPTY cells (will give Inf travel time)")
+```
+
+> **What to look for.** Any point listed above sits on an empty cell (water, or outside the raster) and its travel times will be `Inf`. Usually the coordinate is slightly off, for example on a lake or river. Check and correct it. If nothing is printed, all points are fine.
+
+---
+
+# Travel time matrix
+
+```{r matrix}
+time_min <- as.matrix(gdistance::costDistance(trans.walk.gc, origins, dest))
+rownames(time_min) <- dps$dps_province
+colnames(time_min) <- ss$sentinel_site
+
+write_excel_csv(
+  data.frame(DPS = rownames(time_min), round(time_min, 1), check.names = FALSE),
+  file.path(out_dir, paste0("time_matrix_walk_", net, "_minutes.csv"))
+)
+```
+
+**How to read the matrix.** Each **row is a DPS** (start) and each **column is a sentinel site** (destination). Each cell is walking time in **minutes**. Example: row "Equateur", column "Bolenge" = 125 means walking from the Equateur DPS to Bolenge takes about 2 hours.
+
+Because the rows and columns are in the same order, the **diagonal** (row 1 with column 1, row 2 with column 2, and so on) is **each DPS to its own site**. That diagonal is our main result. All other cells are "DPS to another province's site", which we use only as a check.
+
+The full matrix is saved as a CSV in ``r out_dir``, for the supplementary material.
+
+---
+
+# Quality checks
+
+Two automatic checks catch most problems before we interpret anything.
+
+```{r qc}
+own_min <- diag(time_min)
+
+dps_sf <- st_as_sf(dps, coords = c("longitude", "latitude"), crs = 4326)
+ss_sf  <- st_as_sf(ss,  coords = c("longitude", "latitude"), crs = 4326)
+straight_km <- as.numeric(st_distance(dps_sf, ss_sf, by_element = TRUE)) / 1000
+
+# Check 1: is another DPS's site closer than this DPS's own site?
+closest_other_min <- sapply(seq_len(n_pairs), function(i) {
+  others <- which(dps$dps_province != dps$dps_province[i])
+  if (length(others) == 0) return(NA)
+  min(time_min[i, others])
+})
+
+# Check 2: effective speed = straight-line km / walking hours
+eff_speed <- straight_km / (own_min / 60)
+
+qc <- data.frame(
+  DPS               = dps$dps_province,
+  Sentinel_site     = ss$sentinel_site,
+  Straight_km       = round(straight_km, 1),
+  Own_site_hours    = round(own_min / 60, 1),
+  Closest_other_hours = round(closest_other_min / 60, 1),
+  Effective_kmh     = round(eff_speed, 1)
+) %>%
+  mutate(Flag = case_when(
+    !is.na(Closest_other_hours) & Closest_other_hours < Own_site_hours ~
+      "Another province's site is closer: check coordinates/pairing",
+    Straight_km > 2 & Effective_kmh < 1.5 ~
+      "Very slow route: strong barrier or coordinate error",
+    TRUE ~ ""
+  ))
+
+flagged <- qc[qc$Flag != "", ]
+if (nrow(flagged) > 0) {
+  kable(flagged, caption = "Pairs flagged for review")
+} else {
+  cat("No pairs flagged.")
+}
+```
+
+**What the checks mean:**
+
+- **Check 1, nearest site.** A DPS should normally be closer to its own site than to another province's site. If not, either the site's coordinates are wrong, or the two files are out of order.  In the previous analysis, Sud-Kivu / Katana was flagged because the geocoding pipeline selected a different location named Katana instead of the intended sentinel site in Sud-Kivu. The incorrect coordinates have now been replaced with the Google-first coordinates
+(latitude -2.225, longitude 28.83139). 
+
+- **Check 2, effective speed.** On easy ground you walk about 5 km/h, so 10 km straight-line should take about 2 hours. A much lower effective speed means the route has to go around something (a lake, a large river, swamp), or a coordinate is wrong. For pairs closer than about 2 km the ratio jumps around, so we do not flag those.
+
+**A flagged pair is not automatically wrong.** It needs a person to look at it on the map and decide.
+
+---
+
+# Figure 1: the sentinel network
+
+```{r fig1, fig.height = 10}
+point_shapes  <- c("DPS (provincial health division)" = 19, "Sentinel site" = 17)
+point_colours <- c("DPS (provincial health division)" = "black", "Sentinel site" = "red")
+
+dps_pts <- dps %>%
+  distinct(dps_province, latitude, longitude) %>%
+  transmute(label = paste("DPS", dps_province), lon = longitude, lat = latitude,
+            type = "DPS (provincial health division)")
+ss_pts <- ss %>%
+  transmute(label = sentinel_site, lon = longitude, lat = latitude,
+            type = "Sentinel site")
+pts <- rbind(dps_pts, ss_pts)
+
+pairs_df <- data.frame(dps_lon = dps$longitude, dps_lat = dps$latitude,
+                       ss_lon  = ss$longitude,  ss_lat  = ss$latitude)
+
+fig1 <- ggplot() +
+  geom_sf(data = drc.prov, fill = "grey96", colour = "grey60", linewidth = 0.3) +
+  geom_segment(data = pairs_df,
+               aes(x = dps_lon, y = dps_lat, xend = ss_lon, yend = ss_lat),
+               linetype = "dashed", colour = "grey35", linewidth = 0.4) +
+  geom_point(data = pts, aes(x = lon, y = lat, shape = type, colour = type), size = 2.8) +
+  geom_text_repel(data = pts, aes(x = lon, y = lat, label = label, colour = type),
+                  size = 3, box.padding = 0.6, min.segment.length = 0,
+                  max.overlaps = Inf, show.legend = FALSE) +
+  scale_shape_manual(values = point_shapes, name = NULL) +
+  scale_colour_manual(values = point_colours, name = NULL) +
+  annotation_scale(location = "bl", width_hint = 0.25) +
+  annotation_north_arrow(location = "tr", height = unit(1, "cm"),
+                         width = unit(0.8, "cm"), style = north_arrow_minimal()) +
+  coord_sf() +
+  labs(title = paste0("Fig 1. Sentinel surveillance network (", net, " sites), DRC"),
+       subtitle = "Dashed lines link each DPS to its own sentinel site") +
+  theme_void(base_size = 11) +
+  theme(legend.position = "bottom",
+        plot.title    = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, colour = "grey30"))
+
+fig1
+ggsave(file.path(out_dir, paste0("Fig1_network_", net, ".png")),
+       fig1, width = 10, height = 10, dpi = 300, bg = "white")
+```
+
+**What to look at.** Short dashed lines mean the site is at or next to its DPS; long lines mean it is far away. A line that crosses into another province, or a site in an unexpected place, is worth checking against the QC table.
+
+> **Province boundaries and time period.** The map shows the historical 11 provinces of the DRC (1988–2015), corresponding to the administrative structure used when the original sentinel network was established in 2003–2005.
+---
+
+# Figure 2: walking time to the nearest DPS
+
+```{r fig2-compute}
+# One run with all DPS as origins gives travel time to the NEAREST DPS for every cell
+tt <- gdistance::accCost(trans.walk.gc, unique(origins))
+tt <- raster::mask(tt, as(drc.prov, "Spatial"))
+tt_h <- tt / 60
+tt_h[tt_h > cap_h] <- cap_h
+
+# Aggregate x2 for plotting speed only (does not change results)
+tt_plot <- raster::aggregate(tt_h, fact = 2, fun = mean)
+tt_df <- raster::as.data.frame(tt_plot, xy = TRUE, na.rm = TRUE)
+names(tt_df)[3] <- "hours"
+```
+
+```{r fig2, fig.height = 9}
+breaks_h <- seq(0, cap_h, by = 12)
+labels_h <- as.character(breaks_h)
+labels_h[length(labels_h)] <- paste0(cap_h, "+")
+
+fig2 <- ggplot() +
+  geom_raster(data = tt_df, aes(x = x, y = y, fill = hours)) +
+  geom_sf(data = drc.prov, fill = NA, colour = "grey30", linewidth = 0.25) +
+  geom_point(data = pts, aes(x = lon, y = lat, shape = type, colour = type), size = 2.2) +
+  scale_fill_gradientn(colours = hcl.colors(50, "YlGnBu", rev = TRUE),
+                       limits = c(0, cap_h), breaks = breaks_h, labels = labels_h,
+                       name = "Walking time to\nnearest DPS (hours)") +
+  scale_shape_manual(values = point_shapes, name = NULL) +
+  scale_colour_manual(values = point_colours, name = NULL) +
+  guides(fill   = guide_colourbar(order = 1, barheight = unit(5, "cm")),
+         shape  = guide_legend(order = 2),
+         colour = guide_legend(order = 2)) +
+  annotation_scale(location = "bl", width_hint = 0.25) +
+  coord_sf() +
+  labs(title = paste0("Fig 2. Walking time to the nearest DPS (", net, "-site network)"),
+       subtitle = paste0("Walking-only friction surface (MAP, 2020); values above ",
+                         cap_h, " h shown as ", cap_h, "+")) +
+  theme_void(base_size = 11) +
+  theme(plot.title    = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, colour = "grey30"))
+
+fig2
+ggsave(file.path(out_dir, paste0("Fig2_walking_time_", net, ".png")),
+       fig2, width = 11, height = 9, dpi = 300, bg = "white")
+```
+
+```{r fig2-summary, include = FALSE}
+pct_beyond_cap <- round(100 * mean(raster::values(tt_h) >= cap_h, na.rm = TRUE), 0)
+pct_within_24  <- round(100 * mean(raster::values(tt_h) <= 24,    na.rm = TRUE), 0)
+site_tt_h      <- raster::extract(tt_h, dest)
+n_sites_24     <- sum(site_tt_h <= 24, na.rm = TRUE)
+```
+
+**What the map shows for this network:**
+
+- About **`r pct_within_24`%** of the country is within one day's walk (24 h) of a DPS, and about **`r pct_beyond_cap`%** is `r cap_h` hours or more away. (These are approximate, based on grid cells.)
+- **`r n_sites_24` of `r n_pairs`** sentinel sites lie within one day's walk of the nearest DPS.
+
+**How to read it:**
+
+- **Light halos** around each DPS show the area reachable within roughly one to two days on foot. At 5 km/h, 20 hours of walking is roughly 100 km.
+- **Dark blue** means `r cap_h` hours or more. The legend is capped so the near-DPS detail stays visible.
+- **Halos are not perfect circles.** They stretch along easy terrain and shrink at barriers such as rivers, swamps and forest.
+- **Where are the sentinel sites?** If most red triangles sit inside light halos, sites were chosen close to DPS offices. That is practical for supervision but may under-represent remote rural transmission.
+- **Isolated light patches** disconnected from any halo usually mean the route crosses a border through the buffer (see "Cross-border routes" under Limitations).
+
+---
+
+# Table 1: each DPS to its own sentinel site
+
+```{r table1}
+table1 <- data.frame(
+  Province = dps$dps_province,
+  `Sentinel site` = ss$sentinel_site,
+  `Straight-line distance (km)` = round(straight_km, 1),
+  `Walking time (hours)` = round(own_min / 60, 1),
+  `Walking time (days)`  = round(own_min / (60 * 24), 1),
+  `Effective speed (km/h)` = ifelse(straight_km > 2, round(eff_speed, 1), NA),
+  check.names = FALSE
+) %>%
+  mutate(`Access category` = case_when(
+    `Walking time (hours)` < 4   ~ "Co-located (<4 h)",
+    `Walking time (hours)` <= 24 ~ "About one day (4 to 24 h)",
+    TRUE                         ~ "More than one day (>24 h)"
+  )) %>%
+  arrange(`Walking time (hours)`)
+
+hrs <- own_min / 60
+summ <- sprintf("Median walking time %.1f h (IQR %.1f to %.1f h; range %.1f to %.1f h).",
+                median(hrs), quantile(hrs, 0.25), quantile(hrs, 0.75), min(hrs), max(hrs))
+
+write_excel_csv(table1, file.path(out_dir, paste0("Table1_DPS_to_site_", net, ".csv")))
+
+ft <- flextable(table1) %>%
+  set_caption(paste0("Table 1. Straight-line distance and walking time from each DPS to its own sentinel site (",
+                     net, "-site network, n = ", n_pairs, ")")) %>%
+  add_footer_lines(c(
+    summ,
+    "DPS: Division Provinciale de la Sante. Walking time estimated with gdistance::costDistance on MAP's 2020 walking-only friction surface (approx. 1 km resolution), 8-direction movement, 50 km buffer around the national boundary.",
+    "Effective speed = straight-line distance / walking time; not shown for pairs under 2 km. Times below about 1 h are within the surface resolution and should be read as co-located."
+  )) %>%
+  theme_booktabs() %>%
+  fontsize(size = 9, part = "all") %>%
+  align(j = 3:6, align = "right", part = "all") %>%
+  autofit()
+
+ft
+save_as_docx(ft, path = file.path(out_dir, paste0("Table1_DPS_to_site_", net, ".docx")))
+```
+
+```{r table1-summary, include = FALSE}
+cat_counts <- table(factor(table1$`Access category`,
+                           levels = c("Co-located (<4 h)",
+                                      "About one day (4 to 24 h)",
+                                      "More than one day (>24 h)")))
+far_sites <- table1 %>% filter(`Walking time (hours)` > 24)
+```
+
+**Summary for this network.** `r summ`
+
+- **`r cat_counts[1]`** sites are effectively co-located with their DPS (under 4 hours' walk).
+- **`r cat_counts[2]`** sites are about one day's walk away (4 to 24 hours).
+- **`r cat_counts[3]`** sites need more than a day: `r if (nrow(far_sites) > 0) paste(far_sites$"Sentinel site", collapse = ", ") else "none"`.
+
+**How to interpret Table 1:**
+
+- **Co-located sites** add little information about access; their main story is representativeness (they are urban or peri-urban).
+- **Most of the variation comes from the distant sites**, so describe them individually rather than relying only on the median.
+- **Effective speed close to 5 km/h** means a fairly direct route; **well below 5** means barriers or detours. This is a useful sentence for the discussion.
+- **Straight-line distance alone underestimates access difficulty** wherever effective speed is low. Showing both is one of the strengths of the friction-surface approach.
+
+---
+
+# Reference: Historical 11-site network (12 October 2026)
+
+This section documents the updates made to the historical 11-site network (2003–2005) and provides guidance for comparing the 11-, 26-, and 52-site networks.
+
+**1. Historical provincial boundaries.**
+
+The analysis uses the historical 11-province shapefile of the Democratic Republic of the Congo (1988–2015), corresponding to the administrative structure in place when the original sentinel network was established.
+
+The DPS province names were aligned with the historical administrative boundaries, while retaining the original geographical coordinates.
+
+For the subsequent **26- and 52-site network analyses**, the **GRID3 health-zone shapefile (version 9.0)** should be used to represent the current 26 provinces. The 52-site network represents an expansion of sentinel sites within the existing 26 provinces.
+
+**2. Correction of Katana coordinates.**
+
+During coordinate verification, a geocoding error was identified for Katana.
+
+The previous open-source geocoding pipeline selected a different location named Katana, identified during our review as being in Maniema, rather than the intended sentinel site in Sud-Kivu.
+
+The previous coordinates (latitude -4.19, longitude 29.1) were excluded and replaced with the Google-first coordinates (latitude -2.225, longitude 28.83139).
+
+The corrected location was checked using Google Earth and corresponds to the Katana area in Sud-Kivu, north of Bukavu.
+
+In the previous analysis, the incorrect location resulted in an estimated walking time of approximately 40 hours from the Sud-Kivu DPS headquarters to Katana. This estimate should not be used to interpret the corrected network.
+
+**3. DPS–sentinel-site pairing and coordinate verification.**
+
+All 11 historical DPS–sentinel-site pairs were checked for missing coordinates and correct row alignment.
+
+The DPS province names were also matched to the historical 11-province shapefile.
+
+Although all pairs have complete coordinates, some locations may represent approximate DPS headquarters or sentinel-site locations rather than exact facilities. These should be considered during interpretation.
+
+**4. Updated walking travel-time analysis.**
+
+The walking travel-time analysis will be rerun using the corrected coordinates and historical 11-province boundaries.
+
+The updated results will be assessed using the travel-time matrix, automatic quality checks, maps, and Table 1.
+
+Previous walking-time estimates and accessibility categories will not be carried forward without verification against the new results.
+
+**5. Comparability between sentinel networks.**
+
+The historical 11-site network provides a reference for evaluating subsequent changes in the geographical accessibility of sentinel surveillance sites.
+
+The same 2020 walking friction surface, geographical coverage, and routing methodology should be maintained across the three networks to ensure comparability. Administrative boundaries will reflect the respective network periods.
+
+The 2020 friction surface represents more recent travel conditions and should not be interpreted as a historical reconstruction of accessibility in 2003–2005.
+
+**What to watch for in the 26- and 52-site runs:**
+
+- Do the additional sentinel sites improve geographical coverage, particularly in remote areas?
+- How does walking travel time between DPS headquarters and their corresponding sentinel sites change across networks?
+- Does the proportion of the country within one day's walk of a DPS increase with the expanded network?
+- In the 52-site network, where one DPS supervises two sites, how do their walking travel times differ?
+- Are there any new quality-control flags, particularly near borders, rivers, and lakes?
+- Are the corrected Katana coordinates consistently used in the 26- and 52-site datasets?
+
+The final comparison will be based on the updated model outputs rather than the preliminary results of the earlier pipeline.
+
+---
+
+# Limitations
+
+- **Walking only.** This assumes no vehicles or boats. Real supervision travel often uses motorbikes, cars or river transport, so these are upper-bound times. A motorized analysis is being done separately.
+- **Time mismatch.** The friction surface represents roads and land cover around 2020. For the 2003-2005 network, roads may have been fewer or in worse condition, so times for that period are likely underestimated.
+- **Resolution.** At about 1 km, differences of less than an hour of walking are not meaningful.
+- **No field validation.** Unlike Longbottom et al. (2020), who compared model times with real GPS tracks, we have no observed travel times. Where possible, compare a few pairs with known journey times from DPS staff.
+- **Seasonality.** The surface does not account for rainy-season flooding or impassable roads.
+- **Cross-border routes.** The buffer lets some routes pass briefly through neighbouring countries. For strictly within-DRC travel, the friction surface would need to be masked to the national boundary before building the transition layer.
+
+---
+
+# Outputs
+
+All files are saved in ``r out_dir``:
+
+```{r outputs, echo = FALSE}
+kable(data.frame(File = list.files(out_dir)), caption = "Files produced by this run")
+```
+
+```{r session, echo = FALSE}
+sessionInfo()
+```
