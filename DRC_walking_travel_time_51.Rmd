@@ -1,0 +1,724 @@
+---
+title: "Walking travel time from DPS to sentinel sites, DRC"
+subtitle: "Combined 2014 and proposed 2021 network: 51 sites"
+author: "MAP East Africa Node, Data Engineering Team"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  network: "51"
+  shp_path: "GRID3_COD_health_zones/GRID3_COD_health_zones_v9_0.shp"
+  data_dir: "output"
+  buffer_km: 50
+  cap_hours: 72
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    theme: flatly
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 10, fig.height = 9, dpi = 150)
+```
+
+# How to use this document {-}
+
+This report evaluates **walking accessibility for the combined network of 51 sentinel sites**, including 26 existing sites established in 2014 and 25 additional sites proposed in 2021. The analysis uses 26 Provincial Health Division (DPS) offices and GRID3 v9.0 boundaries representing the modern 26-province structure.
+
+The proposed 2021 expansion originally included 26 additional sentinel sites, one per province. However, the additional site for Kasaï-Central is missing from the original dataset and requires confirmation from the NMCP. Therefore, the current analysis includes 51 of the intended 52 sites.
+
+To reproduce the combined network analysis, run:
+
+```r
+rmarkdown::render(
+  "DRC_walking_travel_time_51.Rmd",
+  params = list(network = "51"),
+  output_file = "DRC_walking_tt_51.html"
+)
+```
+
+**Input files expected:**
+
+| File | Required columns |
+|---|---|
+| `output/dps_26.csv` | `dps_province`, `latitude`, `longitude` |
+| `output/network_51/ss_51.csv` | `network`, `dps_province`, `sentinel_site`, `latitude`, `longitude` |
+| `output/network_51/missing_2021_site.csv` | Record of the missing proposed site in Kasaï-Central |
+
+**Pairing is by province.** Each sentinel site is matched to the DPS office responsible for its province, using the `dps_province` variable. Unlike the 26-site analysis, pairing does not depend on row order. All 26 DPS offices and 51 sentinel sites have non-missing geocoded coordinates. Their locations on valid friction-raster cells are checked during the analysis.
+
+**Cached walking surface.** The script reuses the MAP 2020 walking friction raster and `gdistance` transition layer when the cached files exist. These are the same surfaces used for the historical 11-site and 2014 26-site analyses, allowing consistent comparisons. When a cache does not exist, generating it can be time-consuming.
+
+**Period of interpretation.** The existing 2014 and proposed 2021 sentinel-site locations are assessed using an approximately 2020 walking surface. These are modelled walking-time estimates, not observed travel times or a historical reconstruction of transport conditions. The proposed additional sites are evaluated as planned locations, not as confirmed operational surveillance sites.
+
+---
+
+
+# Background and question
+
+We want to know **how long it would take to walk from each Provincial Health Division (DPS) office to the sentinel site it is responsible for**, and more broadly, how far each part of the country is from the nearest DPS.
+
+This matters for supervision visits, sample transport and supply delivery. It also tells us whether sentinel sites were chosen mainly because they were easy to reach, which affects how representative they are of malaria transmission in remote areas.
+
+**Method in one paragraph.** We use the Malaria Atlas Project's 2020 **walking-only friction surface**: a grid (about 1 km cells) where each cell holds the time in minutes needed to walk one metre through it, based on land cover, terrain, roads and water. We convert this grid into a network of connections between neighbouring cells, and then find the fastest walking route between points with a shortest-path algorithm (Dijkstra) using the `gdistance` package. This is the same approach used by Weiss et al. for global travel-time-to-healthcare maps, and by Longbottom et al. (2020) for tsetse monitoring in Uganda.
+
+---
+
+# Setup
+
+```{r packages}
+library(sf)
+library(dplyr)
+library(readr)
+library(raster)        # gdistance only works with 'raster' objects
+library(gdistance)
+library(malariaAtlas)
+library(ggplot2)
+library(ggrepel)
+library(ggspatial)
+library(flextable)
+library(knitr)
+# Note: we call terra functions as terra::... rather than library(terra),
+# because terra and raster both have functions called extract(), mask(), crop().
+
+net     <- params$network
+cap_h   <- params$cap_hours
+out_dir <- file.path(params$data_dir, paste0("network_", net))
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+---
+
+# Data and first checks
+
+## Read the DPS and sentinel-site coordinates
+
+```{r read-points}
+# 26 DPS offices (origins)
+dps_raw <- readr::read_csv(
+  "output/dps_26.csv",
+  show_col_types = FALSE
+)
+
+# 51 sentinel sites (destinations)
+ss_raw <- readr::read_csv(
+  "output/network_51/ss_51.csv",
+  show_col_types = FALSE
+)
+
+# Verify the expected numbers
+stopifnot(
+  nrow(dps_raw) == 26,
+  nrow(ss_raw) == 51
+)
+```
+
+
+## Check missing coordinates and province matching
+
+> **Why this matters.** Each sentinel site must have valid coordinates and a corresponding provincial DPS office. Unlike the 26-site analysis, the DPS and sentinel-site files have different numbers of rows, so we match locations by province rather than row order. Missing coordinates or unmatched provinces must be investigated before calculating walking times.
+
+
+
+```{r drop-missing}
+# Use the verified input coordinates
+dps <- dps_raw
+ss  <- ss_raw
+
+# Check for missing coordinates
+stopifnot(
+  !anyNA(dps$latitude),
+  !anyNA(dps$longitude),
+  !anyNA(ss$latitude),
+  !anyNA(ss$longitude)
+)
+
+# Every sentinel site must belong to a known DPS province
+stopifnot(
+  all(ss$dps_province %in% dps$dps_province)
+)
+
+n_dps   <- nrow(dps)
+n_sites <- nrow(ss)
+```
+
+
+This analysis includes **`r n_dps` DPS offices** and **`r n_sites` sentinel sites** (26 existing sites and 25 proposed additional sites). One additional proposed site in Kasaï-Central is still pending confirmation from the NMCP.
+
+
+# Boundaries and buffer
+
+## Province boundaries
+
+
+The GRID3 v9.0 shapefile contains **519 health zones** (*zones de santé*) classified into **26 provinces**. We dissolve the health-zone geometries by province to create the modern provincial boundaries used for the combined network of 51 sentinel sites (26 existing sites from 2014 and 25 additional sites proposed in 2021).
+
+
+```{r boundaries}
+drc.shp <- st_read(params$shp_path, quiet = TRUE)
+
+drc.prov <- drc.shp %>%
+  st_make_valid() %>%
+  group_by(province) %>%
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+# Do DPS province names match the boundary names?
+name_mismatch <- setdiff(unique(dps$dps_province), drc.prov$province)
+name_mismatch
+```
+
+> This check should return `character(0)`. Province names in the DPS input were harmonised with GRID3 before the analysis. Any unexpected name should be investigated before comparing or joining province-level data.
+
+## Buffer around the country
+
+> **Why a buffer?** The routing can only use cells inside the friction raster. Anything outside behaves like a solid wall. Several DPS and sites (Goma, Bukavu, Kinshasa, Matadi) sit right on international borders or lake shores. If we cut the raster exactly at the border, some of these points could fall on an empty cell and return infinite travel time. A `r params$buffer_km` km buffer keeps them safely inside the grid.
+>
+> Note: with longitude/latitude data, `st_buffer()` distances are in **metres**, so 50 km is written as 50000.
+
+```{r buffer}
+drc.buffer <- st_buffer(st_union(drc.prov), dist = params$buffer_km * 1000)
+```
+
+---
+
+# Friction surface
+
+```{r friction}
+fric_file <- file.path(params$data_dir, "friction_walk_drc_buffer.tif")
+
+if (file.exists(fric_file)) {
+  friction.walk <- terra::rast(fric_file)
+} else {
+  friction.walk <- malariaAtlas::getRaster(
+    dataset_id = "Explorer__2020_walking_only_friction_surface",
+    shp = st_as_sf(drc.buffer)
+  )
+  terra::writeRaster(friction.walk, fric_file, overwrite = TRUE)
+}
+
+# getRaster returns a terra 'SpatRaster'; gdistance needs a 'raster' RasterLayer
+friction.walk.raster <- raster::raster(friction.walk)
+```
+
+**How to read the values.** Units are **minutes per metre**. A value of 0.012 means 12 minutes per km, which is **5 km/h**, normal walking speed on a road or open ground. Higher values mean slower walking (forest, swamp, steep slopes).
+
+---
+
+# Transition layer
+
+```{r transition}
+trans_file <- file.path(params$data_dir, "transition_walk_drc_gc.rds")
+
+if (file.exists(trans_file)) {
+  trans.walk.gc <- readRDS(trans_file)
+} else {
+  trans.walk <- gdistance::transition(
+    friction.walk.raster,
+    transitionFunction = function(x) 1 / mean(x),
+    directions = 8
+  )
+  trans.walk.gc <- gdistance::geoCorrection(trans.walk, type = "c")
+  saveRDS(trans.walk.gc, trans_file)
+}
+```
+
+**What these two steps do, in plain language:**
+
+- **`transition()`** turns "how hard is each cell to walk through" into "how easy is it to move from one cell to its neighbour". For each pair of neighbouring cells it averages their friction and takes the inverse (`1 / mean(x)`), because `gdistance` works with *ease* of movement (conductance), not cost. `directions = 8` allows moves to all eight neighbours, including diagonals, which gives more realistic routes than four directions.
+- **`geoCorrection()`** accounts for distance. A diagonal step is longer than a straight step, and in longitude/latitude, cells get narrower away from the equator. Without this, travel times would be wrong.
+
+This layer depends only on the landscape, so it is built once and reused for all three networks.
+
+---
+
+# Origins and destinations
+
+```{r points}
+origins <- cbind(dps$longitude, dps$latitude)        # longitude FIRST (x), then latitude (y)
+rownames(origins) <- dps$dps_province
+
+dest <- cbind(ss$longitude, ss$latitude)
+rownames(dest) <- ss$sentinel_site
+
+# Does every point sit on a valid friction cell?
+cell_check <- data.frame(
+  Point    = c(paste("DPS", dps$dps_province), ss$sentinel_site),
+  Friction = c(raster::extract(friction.walk.raster, origins),
+               raster::extract(friction.walk.raster, dest))
+)
+bad_cells <- cell_check[is.na(cell_check$Friction), ]
+if (nrow(bad_cells) > 0) kable(bad_cells, caption = "Points on EMPTY cells (will give Inf travel time)")
+```
+
+> **What to look for.** Any point listed above sits on an empty cell (water, or outside the raster) and its travel times will be `Inf`. Usually the coordinate is slightly off, for example on a lake or river. Check and correct it. If nothing is printed, all points are fine.
+
+---
+
+# Travel time matrix
+
+```{r matrix}
+time_min <- as.matrix(gdistance::costDistance(trans.walk.gc, origins, dest))
+rownames(time_min) <- dps$dps_province
+colnames(time_min) <- ss$sentinel_site
+
+write_excel_csv(
+  data.frame(DPS = rownames(time_min), round(time_min, 1), check.names = FALSE),
+  file.path(out_dir, paste0("time_matrix_walk_", net, "_minutes.csv"))
+)
+```
+
+**How to read the matrix.** Each row represents a DPS office (origin), and each column represents a sentinel site (destination). Each cell shows the estimated walking time in minutes. For example, the estimated walking time from the Equateur DPS to Bolenge is approximately 60 minutes (1 hour).
+
+
+Because the matrix contains 26 DPS offices (rows) and 51 sentinel sites (columns), the diagonal cannot be used to identify each DPS-to-site pair. Instead, each sentinel site is matched to its assigned DPS using the province name (`dps_province`).
+
+The estimated walking time from each DPS to its assigned sentinel site is extracted from the corresponding matrix cell. These 51 values are our main results and are presented in Table 1. The remaining matrix values represent walking times to sentinel sites in other provinces and are used for quality checks.
+
+
+The full matrix is saved as a CSV in ``r out_dir``, for the supplementary material.
+
+---
+
+# Quality checks
+
+Two automatic checks help identify potential geographical or accessibility issues among the 51 sentinel sites before we interpret the walking-time results.
+
+
+
+```{r qc}
+# 1. Match each sentinel site to its provincial DPS
+
+dps_index <- match(ss$dps_province, dps$dps_province)
+
+stopifnot(
+  !anyNA(dps_index),
+  nrow(time_min) == n_dps,
+  ncol(time_min) == n_sites
+)
+
+# Walking time from each DPS to its assigned sentinel site
+own_min <- time_min[
+  cbind(dps_index, seq_len(n_sites))
+]
+
+
+# 2. Calculate straight-line distances
+
+dps_sf <- st_as_sf(dps, coords = c("longitude", "latitude"), crs = 4326)
+ss_sf  <- st_as_sf(ss, coords = c("longitude", "latitude"), crs = 4326)
+
+# Match the 26 DPS locations to the 51 sites
+straight_km <- as.numeric(
+  st_distance(dps_sf[dps_index, ], ss_sf, by_element = TRUE)
+) / 1000
+
+
+# 3. Check 1: is another province's site closer?
+
+closest_other_min <- sapply(seq_len(n_sites), function(i) {
+
+  others <- which(ss$dps_province != ss$dps_province[i])
+
+  if (length(others) == 0) return(NA_real_)
+
+  min(time_min[dps_index[i], others])
+})
+
+
+# 4. Check 2: effective walking speed
+
+# Avoid dividing by zero for sites with identical coordinates
+eff_speed <- rep(NA_real_, n_sites)
+
+valid <- is.finite(own_min) & own_min > 0
+
+eff_speed[valid] <- straight_km[valid] / (own_min[valid] / 60)
+
+
+# 5. Create the quality-check table
+
+qc <- data.frame(
+  DPS = ss$dps_province,
+  Network = ss$network,
+  Sentinel_site = ss$sentinel_site,
+  Straight_km = round(straight_km, 1),
+  Own_site_hours = round(own_min / 60, 1),
+  Closest_other_hours = round(closest_other_min / 60, 1),
+  Effective_kmh = round(eff_speed, 1)
+) %>%
+  mutate(Flag = case_when(
+    !is.na(Closest_other_hours) &
+      Closest_other_hours < Own_site_hours ~
+      "Another province's site is closer: review location",
+
+    Straight_km > 2 & Effective_kmh < 1.5 ~
+      "Very slow route: review geographical barriers",
+
+    TRUE ~ ""
+  ))
+
+
+# 6. Display sites flagged for review
+
+flagged <- qc %>% filter(Flag != "")
+
+if (nrow(flagged) > 0) {
+  kable(flagged, caption = "Sentinel sites flagged for review")
+} else {
+  cat("No sites flagged.")
+}
+```
+
+
+**What the checks mean:**
+
+- **Check 1, nearest site.** A DPS should normally be closer to its own site than to another province's site. If not, either the site's coordinates are wrong, or the two files are out of order. *In the 11-site run this flagged Sud-Kivu / Katana*: see the reference section at the end.
+- **Check 2, effective speed.** On easy ground you walk about 5 km/h, so 10 km straight-line should take about 2 hours. A much lower effective speed means the route has to go around something (a lake, a large river, swamp), or a coordinate is wrong. For pairs closer than about 2 km the ratio jumps around, so we do not flag those.
+
+**A flagged pair is not automatically wrong.** It needs a person to look at it on the map and decide.
+
+---
+
+# Figure 1: the sentinel network
+
+```{r fig1, fig.height = 10}
+point_shapes  <- c("DPS (provincial health division)" = 19, "Sentinel site" = 17)
+point_colours <- c("DPS (provincial health division)" = "black", "Sentinel site" = "red")
+
+dps_pts <- dps %>%
+  distinct(dps_province, latitude, longitude) %>%
+  transmute(label = paste("DPS", dps_province), lon = longitude, lat = latitude,
+            type = "DPS (provincial health division)")
+ss_pts <- ss %>%
+  transmute(label = sentinel_site, lon = longitude, lat = latitude,
+            type = "Sentinel site")
+pts <- rbind(dps_pts, ss_pts)
+
+pairs_df <- data.frame(
+  dps_lon = dps$longitude[dps_index],
+  dps_lat = dps$latitude[dps_index],
+  ss_lon  = ss$longitude,
+  ss_lat  = ss$latitude
+)
+
+stopifnot(nrow(pairs_df) == 51)
+
+fig1 <- ggplot() +
+  geom_sf(data = drc.prov, fill = "grey96", colour = "grey60", linewidth = 0.3) +
+  geom_segment(data = pairs_df,
+               aes(x = dps_lon, y = dps_lat, xend = ss_lon, yend = ss_lat),
+               linetype = "dashed", colour = "grey35", linewidth = 0.4) +
+  geom_point(data = pts, aes(x = lon, y = lat, shape = type, colour = type), size = 2.8) +
+  geom_text_repel(data = pts, aes(x = lon, y = lat, label = label, colour = type),
+                  size = 3, box.padding = 0.6, min.segment.length = 0,
+                  max.overlaps = Inf, show.legend = FALSE) +
+  scale_shape_manual(values = point_shapes, name = NULL) +
+  scale_colour_manual(values = point_colours, name = NULL) +
+  annotation_scale(location = "bl", width_hint = 0.25) +
+  annotation_north_arrow(location = "tr", height = unit(1, "cm"),
+                         width = unit(0.8, "cm"), style = north_arrow_minimal()) +
+  coord_sf() +
+  labs(title = paste0("Fig 1. Sentinel surveillance network (", net, " sites), DRC"),
+       subtitle = "Dashed lines link each DPS to its own sentinel site") +
+  theme_void(base_size = 11) +
+  theme(legend.position = "bottom",
+        plot.title    = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, colour = "grey30"))
+
+fig1
+ggsave(file.path(out_dir, paste0("Fig1_network_", net, ".png")),
+       fig1, width = 10, height = 10, dpi = 300, bg = "white")
+```
+
+**What to look at.** Short dashed lines mean the site is at or next to its DPS; long lines mean it is far away. A line that crosses into another province, or a site in an unexpected place, is worth checking against the QC table.
+
+> **Province boundaries and period.** The 2014 sentinel network is mapped using GRID3's modern **26-province boundaries**. The DRC's historical administrative configuration was different before the 2015 reorganisation. The separate 2003–2005 analysis uses the former 11-province boundaries.
+
+---
+
+# Figure 2: walking time to the nearest DPS
+
+```{r fig2-compute}
+# One run with all DPS as origins gives travel time to the NEAREST DPS for every cell
+tt <- gdistance::accCost(trans.walk.gc, unique(origins))
+tt <- raster::mask(tt, as(drc.prov, "Spatial"))
+tt_h <- tt / 60
+tt_h[tt_h > cap_h] <- cap_h
+
+# Aggregate x2 for plotting speed only (does not change results)
+tt_plot <- raster::aggregate(tt_h, fact = 2, fun = mean)
+tt_df <- raster::as.data.frame(tt_plot, xy = TRUE, na.rm = TRUE)
+names(tt_df)[3] <- "hours"
+```
+
+```{r fig2, fig.height = 9}
+breaks_h <- seq(0, cap_h, by = 12)
+labels_h <- as.character(breaks_h)
+labels_h[length(labels_h)] <- paste0(cap_h, "+")
+
+fig2 <- ggplot() +
+  geom_raster(data = tt_df, aes(x = x, y = y, fill = hours)) +
+  geom_sf(data = drc.prov, fill = NA, colour = "white", linewidth = 0.9) +
+  geom_sf(data = drc.prov, fill = NA, colour = "grey25", linewidth = 0.35) +
+  geom_point(data = pts, aes(x = lon, y = lat, shape = type, colour = type), size = 2.2) +
+  scale_fill_gradientn(colours = hcl.colors(50, "YlGnBu", rev = TRUE),
+                       limits = c(0, cap_h), breaks = breaks_h, labels = labels_h,
+                       name = "Walking time to\nnearest DPS (hours)") +
+  scale_shape_manual(values = point_shapes, name = NULL) +
+  scale_colour_manual(values = point_colours, name = NULL) +
+  guides(fill   = guide_colourbar(order = 1, barheight = unit(5, "cm")),
+         shape  = guide_legend(order = 2),
+         colour = guide_legend(order = 2)) +
+  annotation_scale(location = "bl", width_hint = 0.25) +
+  coord_sf() +
+  labs(title = paste0("Fig 2. Walking time to the nearest DPS (", net, "-site network)"),
+       subtitle = paste0("Walking-only friction surface (MAP, 2020); values above ",
+                         cap_h, " h shown as ", cap_h, "+")) +
+  theme_void(base_size = 11) +
+  theme(plot.title    = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, colour = "grey30"))
+
+fig2
+ggsave(file.path(out_dir, paste0("Fig2_walking_time_", net, ".png")),
+       fig2, width = 11, height = 9, dpi = 300, bg = "white")
+```
+
+```{r fig2-summary, include = FALSE}
+pct_beyond_cap <- round(100 * mean(raster::values(tt_h) >= cap_h, na.rm = TRUE), 0)
+pct_within_24  <- round(100 * mean(raster::values(tt_h) <= 24,    na.rm = TRUE), 0)
+site_tt_h      <- raster::extract(tt_h, dest)
+n_sites_24     <- sum(site_tt_h <= 24, na.rm = TRUE)
+```
+
+
+**What the map shows for this network:**
+
+- About **`r pct_within_24`%** of the mapped raster cells have an estimated walking time of 24 hours or less to the nearest DPS, while about **`r pct_beyond_cap`%** have estimated walking times of `r cap_h` hours or more. (These are approximate, based on raster cells.)
+- **`r n_sites_24` of `r n_sites`** sentinel sites are within 24 modelled walking hours of the nearest DPS, which is not necessarily their assigned DPS.
+- The walking-time surface remains the same as in the 26-site analysis because the 26 DPS locations have not changed. However, the map now includes the 26 existing sentinel sites and 25 proposed additional sites.
+
+**How to read it:**
+
+- **Light halos** around each DPS show areas with shorter estimated walking times. These areas are generally more accessible on foot.
+- **Dark blue** means `r cap_h` hours or more. The legend is capped so the near-DPS detail stays visible.
+- **Halos are not perfect circles.** They stretch along easy terrain and shrink at barriers such as rivers, swamps and forest.
+- **Where are the sentinel sites?** The red triangles show the existing and proposed sentinel-site locations. Their positions help us examine how accessible the proposed additional sites are compared with the existing ones.
+- **Isolated light patches** disconnected from other accessible areas may reflect routes through the buffer or characteristics of the friction surface and should be interpreted cautiously.
+
+---
+
+
+# Table 1: each DPS to its own sentinel site
+
+
+```{r table1}
+table1 <- data.frame(
+  Province = ss$dps_province,
+  Network = ss$network,
+  `Sentinel site` = ss$sentinel_site,
+  `Straight-line distance (km)` = round(straight_km, 1),
+  `Walking time (hours)` = round(own_min / 60, 1),
+  `Walking time (days)`  = round(own_min / (60 * 24), 1),
+  `Effective speed (km/h)` = ifelse(straight_km > 2, round(eff_speed, 1), NA),
+  check.names = FALSE
+) %>%
+  mutate(`Access category` = case_when(
+    `Walking time (hours)` < 4   ~ "Under 4 h",
+    `Walking time (hours)` <= 24 ~ "4 to 24 h",
+    TRUE                         ~ "Over 24 h"
+  )) %>%
+  arrange(`Walking time (hours)`)
+
+hrs <- own_min / 60
+summ <- sprintf("Median walking time %.1f h (IQR %.1f to %.1f h; range %.1f to %.1f h).",
+                median(hrs), quantile(hrs, 0.25), quantile(hrs, 0.75), min(hrs), max(hrs))
+
+# Check identical coordinates and zero walking times
+identical_coords <- sum(dps$latitude[dps_index] == ss$latitude &
+                        dps$longitude[dps_index] == ss$longitude)
+zero_times <- sum(own_min == 0)
+
+write_excel_csv(table1, file.path(out_dir, paste0("Table1_DPS_to_site_", net, ".csv")))
+
+ft <- flextable(table1) %>%
+  set_caption(paste0("Table 1. Straight-line distance and walking time from each DPS to its assigned sentinel sites (",
+                     net, "-site network, n = ", n_sites, ")")) %>%
+  add_footer_lines(c(
+    summ,
+    "DPS: Division Provinciale de la Sante. Walking time estimated with gdistance::costDistance on MAP's 2020 walking-only friction surface (approx. 1 km resolution), 8-direction movement, 50 km buffer around the national boundary.",
+    paste0("Identical DPS-site coordinate pairs: ", identical_coords,
+           ". Zero-hour estimates: ", zero_times,
+           ". Physical co-location has not been verified."),
+    "The network includes 26 existing sites (2014) and 25 proposed additional sites (2021). One additional site in Kasaï-Central is pending NMCP confirmation.",
+    "Effective speed = straight-line distance / walking time; not shown for pairs under 2 km. Modelled walking days represent 24-hour equivalents, not actual travel days."
+  )) %>%
+  theme_booktabs() %>%
+  fontsize(size = 9, part = "all") %>%
+  align(j = 4:7, align = "right", part = "all") %>%
+  autofit()
+
+ft
+save_as_docx(ft, path = file.path(out_dir, paste0("Table1_DPS_to_site_", net, ".docx")))
+```
+
+
+```{r table1-summary, include = FALSE}
+cat_counts <- table(factor(table1$`Access category`,
+                           levels = c("Under 4 h",
+                                      "4 to 24 h",
+                                      "Over 24 h")))
+far_sites <- table1 %>% filter(`Walking time (hours)` > 24)
+```
+
+
+
+**Summary for this network.** `r summ`
+
+- **`r cat_counts[1]`** sentinel sites have estimated walking times under 4 hours from their assigned DPS.
+- **`r cat_counts[2]`** sentinel sites have estimated walking times between 4 and 24 hours.
+- **`r cat_counts[3]`** sentinel sites have estimated walking times over 24 hours: `r if (nrow(far_sites) > 0) paste(far_sites$"Sentinel site", collapse = ", ") else "none"`.
+
+**Important note on zero-hour estimates.**
+
+Of the 51 DPS–sentinel-site pairs, `r identical_coords` have identical geocoded coordinates, and `r zero_times` have zero estimated walking time. Some coordinates represent settlement locations rather than precise facility GPS positions. These coordinates do not confirm that the actual DPS offices and sentinel surveillance locations are physically co-located. The results should therefore be interpreted with caution until more precise facility-level coordinates become available.
+
+**Missing proposed sentinel site.**
+
+The proposed 2021 expansion was intended to include 26 additional sentinel sites, one per province. However, only 25 sites are currently available in the original dataset. The additional sentinel site for Kasaï-Central is missing and requires confirmation from the National Malaria Control Programme (NMCP). Therefore, this analysis includes 51 of the intended 52 sentinel sites.
+
+**How to interpret Table 1:**
+
+- The walking-time categories describe modelled hours, not actual travel days or physical co-location.
+- Longer walking times may reflect greater distances or geographical barriers.
+- Effective speed summarises the relationship between straight-line distance and estimated walking time.
+- Straight-line distance does not account for walking conditions, making the friction-surface estimates a useful complementary measure.
+- The 51-site network includes the 26 existing sentinel sites and 25 proposed additional sites. Results for the proposed sites represent modelled accessibility, not evidence that surveillance has started at those locations.
+
+---
+
+# Reference: findings from the historical 11-site and 2014 26-site networks (12 October 2026)
+
+This section summarises the historical 2003–2005 and 2014 sentinel network analyses and provides a reference for comparing these networks with the proposed 2021 expansion.
+
+The historical analysis used the former 11 provincial boundaries of the DRC, while the 2014 and proposed expansion analyses use the modern 26 provincial boundaries from GRID3 v9.0. All three analyses use the MAP 2020 walking-only friction surface and the same routing methodology.
+
+**1. DPS and sentinel-site locations.**
+
+The historical network included 11 DPS offices and their corresponding sentinel sites, one pair per former province.
+
+The 2014 network included 26 DPS offices and 26 sentinel sites, one pair per province.
+
+The proposed 2021 expansion adds 25 currently identified sentinel sites to the existing network, bringing the total to 51 sites across the 26 provinces. One additional site in Kasaï-Central remains to be confirmed by the NMCP.
+
+The coordinates of Katana in Sud-Kivu were corrected during the historical analysis after an initial geocoding error. The corrected location is approximately latitude -2.225 and longitude 28.83139.
+
+Following this correction, the estimated walking time from the Sud-Kivu DPS to Katana decreased from approximately 40 hours to 6.4 hours.
+
+**2. Estimated walking times.**
+
+The historical 11-site network had a median estimated walking time of **12.7 hours** between DPS offices and their assigned sentinel sites.
+
+Walking times ranged from approximately 0.4 hours (Kabondo) to 37.3 hours (Vanga), showing considerable variation in accessibility across the historical network.
+
+For the 2014 network of 26 sentinel sites, the median estimated walking time was approximately **4.8 hours**, with walking times ranging from 0 to 57.3 hours.
+
+The proposed expanded network includes 51 sentinel sites, with estimated walking times calculated from each site to its assigned provincial DPS office. The results provide an opportunity to compare the accessibility of existing and proposed additional sentinel sites.
+
+**3. Three groups of sentinel sites.**
+
+The historical 11-site network was classified into three groups based on estimated walking time.
+
+| Group | Sentinel sites | Modelled walking time |
+|---|---|---|
+| Under 4 hours | Kabondo, Bolenge, Kingasani, Mikalayi | 0.4–3.6 h |
+| 4 to 24 hours | Katana, Rutshuru, Kalima, Mwene-ditu, Kapolowe | 6.4–22.6 h |
+| Over 24 hours | Kimpese, Vanga | 24.4–37.3 h |
+
+For the 2014 network of 26 sentinel sites, 13 sites had estimated walking times under 4 hours, 7 between 4 and 24 hours, and 6 over 24 hours.
+
+The same categories are applied to the proposed expanded network of 51 sentinel sites to allow comparisons across network stages.
+
+These categories describe modelled walking hours, not actual travel days or physical co-location.
+
+**4. Spatial accessibility.**
+
+The historical walking-time map showed substantial geographical differences in accessibility to DPS offices.
+
+Areas located near DPS offices generally had lower estimated walking times, while more distant areas often required longer walking times.
+
+The 11-province administrative structure meant that some large geographical areas were served by relatively distant provincial offices.
+
+The 2014 network uses 26 DPS offices, reflecting the modern provincial structure. The proposed expansion retains these same 26 DPS locations while adding sentinel sites.
+
+Therefore, the geographical pattern of walking time to the nearest DPS remains unchanged between the 26-site and 51-site analyses. The main difference is the number and distribution of sentinel sites and their estimated accessibility from the assigned DPS offices.
+
+**5. Provincial boundaries.**
+
+The historical analysis used the former 11 provincial boundaries of the DRC.
+
+The 2014 network and the proposed 2021 expansion are analysed using the modern 26 provincial boundaries from GRID3 v9.0.
+
+Therefore, comparisons should consider differences in administrative geography and DPS office locations between the historical and later networks.
+
+**6. Interpretation of the historical and expanded network findings.**
+
+The results provide a baseline for examining differences in modelled geographical accessibility across the historical 11-site network, the 2014 network of 26 sites and the proposed expansion to 51 currently identified sites.
+
+The expanded network allows us to examine whether the proposed additional sentinel sites are located farther from or closer to their assigned DPS offices than the existing sites.
+
+However, the analysis uses a 2020 walking friction surface for all three networks. The results therefore describe accessibility under a common modelled landscape rather than the actual travel conditions experienced in 2003–2005, 2014 or 2021.
+
+The proposed expansion has not been treated as an operational surveillance network in this analysis. Its locations are used to assess geographical accessibility under the proposed configuration.
+
+## What to examine in the proposed expansion analysis
+
+- How does the median DPS-to-sentinel-site walking time compare between the 2014 existing sites and the proposed additional sites?
+- Are the proposed sentinel sites located farther from their assigned DPS offices than the existing sites?
+- How many existing and proposed sentinel sites have estimated walking times under 4 hours, between 4 and 24 hours, or over 24 hours?
+- Which proposed sentinel sites are relatively difficult to access?
+- Are there unusual travel-time estimates or quality-control flags that require further investigation?
+- Which geocoded DPS and sentinel-site locations require more precise GPS coordinates?
+- How will confirmation of the missing proposed site in Kasaï-Central affect the final expanded network analysis?
+
+These comparisons can help assess geographical accessibility, but accessibility alone is insufficient to evaluate the environmental representativeness or surveillance performance of the network.
+
+---
+
+# Limitations
+
+- **Walking-only analysis.** The model estimates travel times on foot and does not include motorised transport, boats or other transport modes commonly used for supervision and sample transportation. Estimated walking times should not be interpreted as actual journey durations.
+
+- **Historical comparison.** The friction surface represents geographical conditions around 2020. Applying it to the 2003–2005, 2014 and proposed 2021 networks allows comparisons using a common landscape, but does not reconstruct historical road or transport conditions.
+
+- **Spatial resolution.** The walking friction surface has approximately 1 km spatial resolution. Short-distance estimates should therefore be interpreted cautiously, particularly around rivers, lakes and provincial borders.
+
+- **Coordinate precision.** Some DPS and sentinel-site locations are based on settlement-level geocoding rather than verified facility GPS coordinates. Identical coordinates may result in zero estimated walking time without confirming physical co-location.
+
+- **Incomplete proposed network.** The original 2021 expansion dataset contains 25 of the intended 26 additional sentinel sites. The proposed additional site in Kasaï-Central remains unidentified and requires confirmation from the NMCP. The current results therefore represent 51 of the intended 52 sites.
+
+- **No field validation.** The modelled travel times have not been systematically validated against observed journeys between DPS offices and sentinel sites in the DRC. Future comparisons with local travel information would help assess their accuracy.
+
+- **Seasonal variation.** The friction surface does not account for seasonal flooding, changes in road accessibility or other temporary travel barriers.
+
+- **Cross-border routes.** The 50 km buffer allows modelled walking routes to extend into neighbouring countries. Such routes may not reflect feasible or permitted travel in practice. A strictly within-DRC analysis would require restricting the routing surface to the national boundary.
+
+- **Interpretation of walking hours.** A modelled walking time of 24 hours does not represent one realistic day of travel. The estimates represent accumulated movement time under the model assumptions and do not include overnight stops, rest periods or other logistical delays.
+
+- **Accessibility versus surveillance coverage.** Shorter walking times do not necessarily indicate better malaria surveillance coverage. Site selection must also consider vector distributions, environmental heterogeneity, transmission patterns and operational requirements.
+
+---
+
+# Outputs
+
+All files are saved in `r out_dir`:
+
+```{r outputs, echo = FALSE}
+kable(data.frame(File = list.files(out_dir)),
+      caption = "Files produced by this run")
+```
+
+```{r session, echo = FALSE}
+sessionInfo()
+```
