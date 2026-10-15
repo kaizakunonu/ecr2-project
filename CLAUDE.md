@@ -53,6 +53,13 @@ quarto render "ecr_progress report.qmd"
 # Rebuild the 26-site input from the workbook (needs openpyxl; no Python env is committed)
 python3 extract_sentinel_sites_26.py            # writes geocoding/input/drc_sentinel_sites_26.csv
 python3 extract_sentinel_sites_26.py --audit    # adds provenance columns; writes ./drc_sentinel_sites_26_audit.csv
+
+# Walking-time inputs (reads the DPS-site pairs, so render those first)
+Rscript build_walking_inputs.R                                            # google_first, into output/
+Rscript build_walking_inputs.R --chain open_first --out output_open_first
+
+# Walking-time reports: R code, so run it through Rscript, not straight in bash
+Rscript -e 'rmarkdown::render("DRC_walking_travel_time_26.Rmd")'   # also _historical_11, _51
 ```
 
 The test suite has no per-test selection. It is a single script of `ok()` assertions grouped by `section()`.
@@ -65,13 +72,20 @@ The extractor combines two blocks from the workbook's `Metadata` sheet: the orig
 
 Its output is deterministic: rows are sorted by accent-folded province, then site. A regenerated input that differs from the committed CSV means the workbook or the crosswalk changed.
 
-The sentinel workflow reads every file in `paths$input` through `read_sites()`, as one registry of 51 sites. The second file is `geocoding/input/drc_sentinel_sites_2021_expansion.csv`: the 25 sites selected in 2021, taken from the `2021_expansion` sheet of `30Sep/DRC_DPS.xlsx` in sheet order. Kasaï-Central has no 2021 site yet. Never append to `drc_sentinel_sites_26.csv`, which the extractor owns; a new network gets its own input file.
+The sentinel workflow reads every file in `paths$input` through `read_sites()`, as one registry of 51 sites. The second file is `geocoding/input/drc_sentinel_sites_2021_expansion.csv`: the 25 sites selected in 2021, taken from the `2021_expansion` sheet of `data/input/DRC_DPS.xlsx` in sheet order. Kasaï-Central has no 2021 site yet. Never append to `drc_sentinel_sites_26.csv`, which the extractor owns; a new network gets its own input file.
 
-A second flow pairs each site with its DPS (Division Provinciale de la Santé) headquarters. It uses `geocoding/input/drc_dps.csv` (DPS seats: dps, province, chef-lieu) and `geocoding/input/drc_dps_site_pairs.csv` (`network, province, dps, sentinel_site`). It reads the sentinel output, and `drc-dps-site-pairs.qmd` writes `geocoding/output/drc_dps_site_pairs_{chain}.csv`, one per coordinate set. The pairs were checked against the `2003_2005`, `2014` and `2021_expansion` sheets of `30Sep/DRC_DPS.xlsx`, which is untracked. The three networks are kept separate, because downstream analysts compare accessibility across them. Each holds exactly what its sheet lists, so the full 2021 configuration is `2014` plus `2021_expansion`.
+A second flow pairs each site with its DPS (Division Provinciale de la Santé) headquarters. It uses `geocoding/input/drc_dps.csv` (DPS seats: dps, province, chef-lieu) and `geocoding/input/drc_dps_site_pairs.csv` (`network, province, dps, sentinel_site`). It reads the sentinel output, and `drc-dps-site-pairs.qmd` writes `geocoding/output/drc_dps_site_pairs_{chain}.csv`, one per coordinate set. The pairs were checked against the `2003_2005`, `2014` and `2021_expansion` sheets of `data/input/DRC_DPS.xlsx`, which is untracked. The three networks are kept separate, because downstream analysts compare accessibility across them. Each holds exactly what its sheet lists, so the full 2021 configuration is `2014` plus `2021_expansion`.
 
-The 2003–2005 pairs keep their pre-2015 province and DPS names. `provinces_pre2015` in `config.R` records the July 2015 split, which matches `DPS_2015` in `30Sep/RDC_11_provinces_1988_2015_shapefile.zip`. `build_pairs` stops if a pair's DPS seat or site lies outside what its province became. Network names must start with the year the network began. `build_pairs` sorts by network name, which gives chronological output (2003_2005 first), and keeps the workbook's row order within each network.
+The 2003–2005 pairs keep their pre-2015 province and DPS names. `provinces_pre2015` in `config.R` records the July 2015 split, which matches `DPS_2015` in `utilities/RDC_11_provinces_1988_2015_shapefile.zip`. `build_pairs` stops if a pair's DPS seat or site lies outside what its province became. Network names must start with the year the network began. `build_pairs` sorts by network name, which gives chronological output (2003_2005 first), and keeps the workbook's row order within each network.
 - Five pre-2015 DPS whose provinces no longer exist have their own registry rows.
 - The other six share the row of the same-named current DPS. The seat is the same, and `normalise_name` folds "Kasaï Oriental" to "Kasaï-Oriental".
+
+The walking-time reports (`DRC_walking_travel_time_{historical_11,26,51}.Rmd`, at the repo root) read the pairs through `build_walking_inputs.R`, which writes `output/` (git-ignored, separate from `geocoding/output/`):
+- `dps_11.csv` + `ss_11.csv` and `dps_26.csv` + `ss_26.csv` are paired by row order.
+- `network_51/ss_51.csv` (2014 + 2021_expansion) is paired with `dps_26.csv` by `dps_province`.
+- `dps_province` uses each boundary layer's spelling, because the Rmds `setdiff()` against it: the 11-province shapefile for 2003_2005, GRID3 v9.0 health zones otherwise (`Mai-Ndombe`, no ï).
+- The script also creates those layers when missing: it unzips `RDC_11_provinces_1988_2015/` from `utilities/` and downloads `GRID3_COD_health_zones/` from GRID3's ArcGIS service.
+- The friction raster and transition layer are cached in `output/` by the first render and reused by the others.
 
 ## Geocoding pipeline architecture (`geocoding/pipeline/`)
 
