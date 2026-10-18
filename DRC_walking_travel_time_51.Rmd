@@ -453,6 +453,7 @@ tt_df <- raster::as.data.frame(tt_plot, xy = TRUE, na.rm = TRUE)
 names(tt_df)[3] <- "hours"
 ```
 
+
 ```{r fig2, fig.height = 9}
 breaks_h <- seq(0, cap_h, by = 12)
 labels_h <- as.character(breaks_h)
@@ -462,28 +463,70 @@ fig2 <- ggplot() +
   geom_raster(data = tt_df, aes(x = x, y = y, fill = hours)) +
   geom_sf(data = drc.prov, fill = NA, colour = "white", linewidth = 0.9) +
   geom_sf(data = drc.prov, fill = NA, colour = "grey25", linewidth = 0.35) +
-  geom_point(data = pts, aes(x = lon, y = lat, shape = type, colour = type), size = 2.2) +
-  scale_fill_gradientn(colours = hcl.colors(50, "YlGnBu", rev = TRUE),
-                       limits = c(0, cap_h), breaks = breaks_h, labels = labels_h,
-                       name = "Walking time to\nnearest DPS (hours)") +
+  geom_point(
+    data = pts,
+    aes(x = lon, y = lat, shape = type, colour = type),
+    size = 2.2
+  ) +
+  scale_fill_gradientn(
+    colours = c(
+      "#EAF5D7",
+      "#B5E7D0",
+      "#65CBBE",
+      "#159FAC",
+      "#2868A7",
+      "#25366F"
+    ),
+    values = scales::rescale(
+      c(0, 12, 24, 36, 54, 72),
+      from = c(0, 72)
+    ),
+    limits = c(0, cap_h),
+    breaks = breaks_h,
+    labels = labels_h,
+    name = "Walking time to\nnearest DPS (hours)",
+    na.value = "transparent"
+  ) +
   scale_shape_manual(values = point_shapes, name = NULL) +
   scale_colour_manual(values = point_colours, name = NULL) +
-  guides(fill   = guide_colourbar(order = 1, barheight = unit(5, "cm")),
-         shape  = guide_legend(order = 2),
-         colour = guide_legend(order = 2)) +
+  guides(
+    fill = guide_colourbar(
+      order = 1,
+      barheight = unit(5, "cm")
+    ),
+    shape = guide_legend(order = 2),
+    colour = guide_legend(order = 2)
+  ) +
   annotation_scale(location = "bl", width_hint = 0.25) +
   coord_sf() +
-  labs(title = paste0("Fig 2. Walking time to the nearest DPS (", net, "-site network)"),
-       subtitle = paste0("Walking-only friction surface (MAP, 2020); values above ",
-                         cap_h, " h shown as ", cap_h, "+")) +
+  labs(
+    title = paste0(
+      "Fig 2. Walking time to the nearest DPS (",
+      net, "-site network)"
+    ),
+    subtitle = paste0(
+      "Walking-only friction surface (MAP, 2020); values above ",
+      cap_h, " h shown as ", cap_h, "+"
+    )
+  ) +
   theme_void(base_size = 11) +
-  theme(plot.title    = element_text(face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(hjust = 0.5, colour = "grey30"))
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, colour = "grey30")
+  )
 
 fig2
-ggsave(file.path(out_dir, paste0("Fig2_walking_time_", net, ".png")),
-       fig2, width = 11, height = 9, dpi = 300, bg = "white")
+
+ggsave(
+  file.path(out_dir, paste0("Fig2_walking_time_", net, ".png")),
+  fig2,
+  width = 11,
+  height = 9,
+  dpi = 300,
+  bg = "white"
+)
 ```
+
 
 ```{r fig2-summary, include = FALSE}
 pct_beyond_cap <- round(100 * mean(raster::values(tt_h) >= cap_h, na.rm = TRUE), 0)

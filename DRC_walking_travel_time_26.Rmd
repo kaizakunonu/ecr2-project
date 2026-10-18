@@ -379,9 +379,25 @@ fig2 <- ggplot() +
   geom_sf(data = drc.prov, fill = NA, colour = "white", linewidth = 0.9) +
   geom_sf(data = drc.prov, fill = NA, colour = "grey25", linewidth = 0.35) +
   geom_point(data = pts, aes(x = lon, y = lat, shape = type, colour = type), size = 2.2) +
-  scale_fill_gradientn(colours = hcl.colors(50, "YlGnBu", rev = TRUE),
-                       limits = c(0, cap_h), breaks = breaks_h, labels = labels_h,
-                       name = "Walking time to\nnearest DPS (hours)") +
+  scale_fill_gradientn(
+    colours = c(
+      "#EAF5D7",
+      "#B5E7D0",
+      "#65CBBE",
+      "#159FAC",
+      "#2868A7",
+      "#25366F"
+    ),
+    values = scales::rescale(
+      c(0, 12, 24, 36, 54, 72),
+      from = c(0, 72)
+    ),
+    limits = c(0, cap_h),
+    breaks = breaks_h,
+    labels = labels_h,
+    name = "Walking time to\nnearest DPS (hours)",
+    na.value = "transparent"
+  ) +
   scale_shape_manual(values = point_shapes, name = NULL) +
   scale_colour_manual(values = point_colours, name = NULL) +
   guides(fill   = guide_colourbar(order = 1, barheight = unit(5, "cm")),

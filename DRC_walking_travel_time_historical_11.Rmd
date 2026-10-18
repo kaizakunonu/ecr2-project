@@ -448,11 +448,23 @@ fig2 <- ggplot() +
 
   # Walking travel-time colour scale
   scale_fill_gradientn(
-    colours = hcl.colors(50, "YlGnBu", rev = TRUE),
+    colours = c(
+      "#EAF5D7",
+      "#B5E7D0",
+      "#65CBBE",
+      "#159FAC",
+      "#2868A7",
+      "#25366F"
+    ),
+    values = scales::rescale(
+      c(0, 12, 24, 36, 54, 72),
+      from = c(0, 72)
+    ),
     limits = c(0, cap_h),
     breaks = breaks_h,
     labels = labels_h,
-    name = "Walking time to\nnearest DPS (hours)"
+    name = "Walking time to\nnearest DPS (hours)",
+    na.value = "transparent"
   ) +
 
   # Point shapes and colours

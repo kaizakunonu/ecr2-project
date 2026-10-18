@@ -1,0 +1,751 @@
+
+---
+title: "Motorised travel time from DPS to sentinel sites, DRC"
+subtitle: "Combined 2014 and proposed 2021 network: 51 sites"
+author: "MAP East Africa Node, Data Engineering Team"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  network: "51"
+  shp_path: "GRID3_COD_health_zones/GRID3_COD_health_zones_v9_0.shp"
+  data_dir: "output"
+  buffer_km: 50
+  cap_hours: 24
+  slow_kmh: 10
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, message = FALSE, warning = FALSE,
+  fig.width = 10, fig.height = 9, dpi = 150
+)
+```
+
+# How to use this document {-}
+
+This report analyses **motorised accessibility for 51 sentinel sites**: 26 existing sites (2014) and 25 proposed additional sites (2021), using **26 DPS offices** and the current GRID3 provincial boundaries. One proposed additional site in Kasaï-Central is missing, so this is not the complete intended 52-site network.
+
+**Required input files:**
+
+| File | Required columns |
+|---|---|
+| `output/dps_26.csv` | `dps_province`, `latitude`, `longitude` |
+| `output/network_51/ss_51.csv` | `network`, `dps_province`, `sentinel_site`, `latitude`, `longitude` |
+| `output/network_51/missing_2021_site.csv` | Optional record of missing Kasaï-Central proposal |
+
+**Crucial:** The 51 sentinel sites are paired with their DPS **by province name**, not by row order and not by the diagonal of the 26 × 51 travel-time matrix.
+
+To render this document in RStudio:
+
+```{r render-example, eval=FALSE}
+rmarkdown::render(
+  input = "DRC_motorized_travel_time_51.Rmd",
+  params = list(network = "51", cap_hours = 24, slow_kmh = 10),
+  output_file = "DRC_motorized_tt_51.html"
+)
+```
+
+Results are saved in `output/network_51/motorized/` to avoid overwriting walking results. The full-resolution national `gdistance` transition is memory-intensive; previously encountered transition failures may still occur if the layer is not already cached.
+
+---
+
+# Background and question
+
+We aim to estimate **motorised travel times from each Provincial Health Division (DPS) office to the sentinel sites in its province**, and travel time from each valid cell across the DRC to its nearest DPS. These estimates inform assessment of accessibility for supervision, sample transport and supply delivery.
+
+**Method.** We use the Malaria Atlas Project's circa-2020 **motorised friction surface**, measured in minutes per metre. We construct an eight-neighbour conductance network with `gdistance::transition()`, apply `geoCorrection(type = "c")`, then calculate shortest-path travel costs with `costDistance()` and `accCost()`. The approach matches the walking analysis, except for the transport-specific friction surface.
+
+The 2020 travel surface is applied to the 2014 and proposed 2021 site locations for a standardised comparison; it does **not** reconstruct conditions in those earlier years. Proposed sites are not assumed to be operational.
+
+---
+
+# Setup
+
+```{r packages}
+library(raster)
+library(sf)
+library(dplyr)
+library(readr)
+library(gdistance)
+library(malariaAtlas)
+library(ggplot2)
+library(ggrepel)
+library(ggspatial)
+library(flextable)
+library(knitr)
+
+net <- params$network
+cap_h <- params$cap_hours
+out_dir <- file.path(params$data_dir, paste0("network_", net), "motorized")
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+---
+
+# Data and first checks
+
+## Read DPS and sentinel-site coordinates
+
+```{r read-points}
+dps_raw <- readr::read_csv(
+  file.path(params$data_dir, "dps_26.csv"), show_col_types = FALSE
+)
+ss_raw <- readr::read_csv(
+  file.path(params$data_dir, "network_51", "ss_51.csv"), show_col_types = FALSE
+)
+
+stopifnot(
+  nrow(dps_raw) == 26,
+  nrow(ss_raw) == 51,
+  all(c("dps_province", "latitude", "longitude") %in% names(dps_raw)),
+  all(c("network", "dps_province", "sentinel_site",
+        "latitude", "longitude") %in% names(ss_raw))
+)
+```
+
+## Validate coordinates and match provinces
+
+```{r validate-points}
+dps <- dps_raw
+ss <- ss_raw
+
+for (field in c("longitude", "latitude")) {
+  dps[[field]] <- suppressWarnings(as.numeric(dps[[field]]))
+  ss[[field]]  <- suppressWarnings(as.numeric(ss[[field]]))
+}
+
+valid_coord <- function(lat, lon) {
+  is.finite(lat) & is.finite(lon) &
+    lat >= -90 & lat <= 90 & lon >= -180 & lon <= 180
+}
+
+stopifnot(
+  all(valid_coord(dps$latitude, dps$longitude)),
+  all(valid_coord(ss$latitude, ss$longitude)),
+  !anyDuplicated(dps$dps_province),
+  all(ss$dps_province %in% dps$dps_province)
+)
+
+# Each site is assigned to the DPS of its province.
+dps_index <- match(ss$dps_province, dps$dps_province)
+stopifnot(!anyNA(dps_index))
+
+n_dps <- nrow(dps)
+n_sites <- nrow(ss)
+print(table(ss$network, useNA = "ifany"))
+
+# Historical Katana coordinate correction, if the site is in the dataset.
+katana_rows <- grep("katana", ss$sentinel_site, ignore.case = TRUE)
+if (length(katana_rows)) {
+  katana_ok <- abs(ss$latitude[katana_rows] + 2.225) <= 0.10 &
+    abs(ss$longitude[katana_rows] - 28.83139) <= 0.10
+  if (!all(katana_ok)) {
+    stop("Please verify the Katana coordinates in ss_51.csv.")
+  }
+}
+```
+
+There are **`r n_dps` DPS offices** and **`r n_sites` sentinel sites** in this analysis. The additional Kasaï-Central proposal is still missing from the source network.
+
+---
+
+# Boundaries and buffer
+
+## Modern provincial boundaries
+
+```{r boundaries}
+drc.shp <- sf::st_read(params$shp_path, quiet = TRUE)
+stopifnot("province" %in% names(drc.shp))
+
+drc.prov <- drc.shp %>%
+  sf::st_make_valid() %>%
+  sf::st_transform(4326) %>%
+  dplyr::group_by(province) %>%
+  dplyr::summarise(.groups = "drop")
+
+stopifnot(nrow(drc.prov) == 26)
+name_mismatch <- setdiff(unique(dps$dps_province), drc.prov$province)
+print(name_mismatch)
+if (length(name_mismatch)) {
+  warning("Some DPS names differ from GRID3 province names; verify before reporting.")
+}
+```
+
+## Buffer around the DRC
+
+```{r buffer}
+# Compute the buffer in metres in a projected coordinate system.
+drc.buffer <- drc.prov %>%
+  sf::st_union() %>%
+  sf::st_transform("ESRI:102023") %>%
+  sf::st_buffer(dist = params$buffer_km * 1000) %>%
+  sf::st_transform(4326)
+```
+
+A `r params$buffer_km`-km buffer helps with boundary effects, but may allow least-cost routes to cross international borders.
+
+---
+
+# Motorised friction surface
+
+```{r friction}
+fric_file <- file.path(
+  params$data_dir,
+  paste0("friction_motorized_drc_buffer_", params$buffer_km, "km.tif")
+)
+
+if (file.exists(fric_file)) {
+  friction.motor <- terra::rast(fric_file)
+} else {
+  friction.motor <- malariaAtlas::getRaster(
+    dataset_id = "Explorer__2020_motorized_friction_surface",
+    shp = sf::st_as_sf(drc.buffer)
+  )
+  terra::writeRaster(friction.motor, fric_file, overwrite = TRUE)
+}
+
+friction.motor.raster <- raster::raster(friction.motor)
+stopifnot(terra::is.lonlat(friction.motor))
+cat("Raster cells:", raster::ncell(friction.motor.raster), "\n")
+```
+
+Friction values are in **minutes per metre**. For example, 0.001 min/m corresponds to 1 min/km (60 km/h), but is only an illustration, not a fixed driving speed.
+
+---
+
+# Motorised transition layer
+
+```{r transition, message=TRUE, warning=TRUE}
+trans_file <- file.path(
+  params$data_dir,
+  paste0("transition_motorized_drc_gc_", params$buffer_km, "km.rds")
+)
+
+if (file.exists(trans_file)) {
+  cat("Loading saved motorised transition layer...\n")
+  trans.motor.gc <- readRDS(trans_file)
+} else {
+  cat("STEP A: Building full DRC motorised transition...\n")
+  trans.motor <- gdistance::transition(
+    friction.motor.raster,
+    transitionFunction = function(x) 1 / mean(x),
+    directions = 8
+  )
+  cat("STEP A complete. STEP B: Geographic correction...\n")
+  trans.motor.gc <- gdistance::geoCorrection(trans.motor, type = "c")
+  cat("STEP B complete. Saving transition...\n")
+  saveRDS(trans.motor.gc, trans_file)
+  rm(trans.motor)
+  invisible(gc())
+}
+
+stopifnot(
+  identical(as.integer(dim(trans.motor.gc)[1:2]),
+            as.integer(dim(friction.motor.raster)[1:2]))
+)
+```
+
+The network uses the same conductance function, eight neighbours and geographic correction as the walking analysis. A national transition can require substantial memory. If it fails, identify the R error before altering the resolution or method.
+
+---
+
+# Origins and destinations
+
+```{r points}
+origins <- cbind(dps$longitude, dps$latitude)
+rownames(origins) <- dps$dps_province
+
+dest <- cbind(ss$longitude, ss$latitude)
+rownames(dest) <- ss$sentinel_site
+
+cell_check <- data.frame(
+  Point = c(paste("DPS", dps$dps_province), ss$sentinel_site),
+  Friction = c(
+    raster::extract(friction.motor.raster, origins),
+    raster::extract(friction.motor.raster, dest)
+  )
+)
+
+bad_cells <- cell_check[
+  !is.finite(cell_check$Friction) | cell_check$Friction <= 0,
+]
+if (nrow(bad_cells)) {
+  print(knitr::kable(bad_cells, caption = "Invalid origin/destination friction cells"))
+  stop("Check coordinates on invalid motorised friction cells.")
+}
+```
+
+---
+
+# Motorised travel-time matrix
+
+The matrix contains **26 DPS rows × 51 sentinel-site columns**. The diagonal is **not** the list of assigned DPS-to-site travel times.
+
+```{r matrix}
+time_min <- as.matrix(gdistance::costDistance(trans.motor.gc, origins, dest))
+rownames(time_min) <- dps$dps_province
+colnames(time_min) <- ss$sentinel_site
+
+readr::write_excel_csv(
+  data.frame(DPS = rownames(time_min), round(time_min, 1), check.names = FALSE),
+  file.path(out_dir, paste0("time_matrix_motorized_", net, "_minutes.csv"))
+)
+
+# Get the correct cell for each sentinel site's assigned provincial DPS.
+own_min <- time_min[cbind(dps_index, seq_len(n_sites))]
+
+readr::write_excel_csv(
+  data.frame(
+    Province = ss$dps_province,
+    Network = ss$network,
+    Sentinel_site = ss$sentinel_site,
+    Motorised_minutes_raw = own_min
+  ),
+  file.path(out_dir, paste0("assigned_DPS_motorized_", net, "_raw.csv"))
+)
+```
+
+---
+
+# Quality checks
+
+```{r qc}
+dps_sf <- sf::st_as_sf(dps, coords = c("longitude", "latitude"), crs = 4326)
+ss_sf  <- sf::st_as_sf(ss, coords = c("longitude", "latitude"), crs = 4326)
+
+straight_km <- as.numeric(
+  sf::st_distance(dps_sf[dps_index, ], ss_sf, by_element = TRUE)
+) / 1000
+
+closest_other_min <- vapply(seq_len(n_sites), function(i) {
+  others <- which(ss$dps_province != ss$dps_province[i])
+  candidate <- time_min[dps_index[i], others]
+  candidate <- candidate[is.finite(candidate)]
+  if (length(candidate)) min(candidate) else NA_real_
+}, numeric(1))
+
+eff_speed <- rep(NA_real_, n_sites)
+valid_speed <- is.finite(own_min) & own_min > 0
+eff_speed[valid_speed] <- straight_km[valid_speed] /
+  (own_min[valid_speed] / 60)
+
+qc_flags <- dplyr::case_when(
+  !is.finite(own_min) ~ "Unreachable: check location/network connectivity",
+  own_min == 0 & straight_km > 0.01 ~ "Zero travel time: points may share a raster cell",
+  !is.na(closest_other_min) & closest_other_min < own_min ~
+    "Another province's site is faster: review location",
+  straight_km > 10 & is.finite(eff_speed) & eff_speed < params$slow_kmh ~
+    "Low effective motorised speed: review roads and coordinates",
+  TRUE ~ ""
+)
+
+qc <- data.frame(
+  Province = ss$dps_province,
+  Network = ss$network,
+  Sentinel_site = ss$sentinel_site,
+  Straight_km = round(straight_km, 1),
+  Own_site_hours = round(own_min / 60, 1),
+  Closest_other_hours = round(closest_other_min / 60, 1),
+  Effective_kmh = round(eff_speed, 1),
+  QC_flag = qc_flags
+)
+
+readr::write_excel_csv(
+  data.frame(
+    Province = ss$dps_province,
+    Network = ss$network,
+    Sentinel_site = ss$sentinel_site,
+    Motorised_minutes_raw = own_min,
+    Straight_km_raw = straight_km,
+    Effective_kmh_raw = eff_speed,
+    QC_flag = qc_flags
+  ),
+  file.path(out_dir, paste0("QC_motorized_pairs_", net, ".csv"))
+)
+
+flagged <- qc %>% dplyr::filter(QC_flag != "")
+if (nrow(flagged)) {
+  print(knitr::kable(flagged, caption = "Sites flagged for review"))
+} else {
+  cat("No sites flagged.\n")
+}
+```
+
+A flag is a reason to investigate, not automatic evidence of wrong coordinates. Effective speed is straight-line distance divided by modelled travel time and is **not** observed driving speed.
+
+---
+
+# Figure 1: The 51-site sentinel network
+
+```{r fig1, fig.height=10}
+point_shapes <- c("DPS (provincial health division)" = 19, "Sentinel site" = 17)
+point_colours <- c("DPS (provincial health division)" = "black", "Sentinel site" = "red")
+
+dps_pts <- dps %>%
+  dplyr::distinct(dps_province, latitude, longitude) %>%
+  dplyr::transmute(label = paste("DPS", dps_province), lon = longitude,
+                   lat = latitude, type = "DPS (provincial health division)")
+ss_pts <- ss %>%
+  dplyr::transmute(label = sentinel_site, lon = longitude,
+                   lat = latitude, type = "Sentinel site")
+pts <- rbind(dps_pts, ss_pts)
+
+pairs_df <- data.frame(
+  dps_lon = dps$longitude[dps_index],
+  dps_lat = dps$latitude[dps_index],
+  ss_lon = ss$longitude,
+  ss_lat = ss$latitude
+)
+
+fig1 <- ggplot2::ggplot() +
+  ggplot2::geom_sf(data = drc.prov, fill = "grey96", colour = "grey60", linewidth = 0.3) +
+  ggplot2::geom_segment(
+    data = pairs_df,
+    ggplot2::aes(x = dps_lon, y = dps_lat, xend = ss_lon, yend = ss_lat),
+    linetype = "dashed", colour = "grey35", linewidth = 0.4
+  ) +
+  ggplot2::geom_point(
+    data = pts, ggplot2::aes(x = lon, y = lat, shape = type, colour = type), size = 2.8
+  ) +
+  ggrepel::geom_text_repel(
+    data = pts, ggplot2::aes(x = lon, y = lat, label = label, colour = type),
+    size = 3, box.padding = 0.6, min.segment.length = 0,
+    max.overlaps = Inf, show.legend = FALSE
+  ) +
+  ggplot2::scale_shape_manual(values = point_shapes, name = NULL) +
+  ggplot2::scale_colour_manual(values = point_colours, name = NULL) +
+  ggspatial::annotation_scale(location = "bl", width_hint = 0.25) +
+  ggspatial::annotation_north_arrow(location = "tr", height = grid::unit(1, "cm"),
+    width = grid::unit(0.8, "cm"), style = ggspatial::north_arrow_minimal()) +
+  ggplot2::coord_sf() +
+  ggplot2::labs(
+    title = paste0("Fig 1. Sentinel surveillance network (", net, " sites), DRC"),
+    subtitle = "Dashed lines connect each sentinel site with its assigned DPS"
+  ) +
+  ggplot2::theme_void(base_size = 11) +
+  ggplot2::theme(
+    legend.position = "bottom",
+    plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = ggplot2::element_text(hjust = 0.5, colour = "grey30")
+  )
+
+fig1
+ggplot2::ggsave(file.path(out_dir, paste0("Fig1_network_motorized_", net, ".png")),
+                fig1, width = 10, height = 10, dpi = 300, bg = "white")
+```
+
+Dashed lines represent **straight-line connections**, not shortest-cost road routes. Existing and proposed sites are both shown as sentinel-site symbols, as in the walking map.
+
+---
+
+# Figure 2: Motorised time to the nearest DPS
+
+Only the **display map** is capped at `r cap_h` hours. Accessibility summaries use original (uncapped) times. Missing-friction cells (including water) remain `NA`; valid-friction but unreachable cells are retained as `Inf` when returned by `accCost()`.
+
+```{r fig2-compute}
+tt <- gdistance::accCost(trans.motor.gc, unique(origins))
+tt <- raster::mask(tt, friction.motor.raster) # No-friction cells -> NA.
+tt <- raster::mask(tt, as(drc.prov, "Spatial"))
+
+tt_h_raw <- tt / 60
+tt_h_display <- raster::calc(tt_h_raw, fun = function(x) pmin(x, cap_h))
+
+# Only aggregate for plotting, not for the model or summary.
+tt_plot <- raster::aggregate(tt_h_display, fact = 2, fun = mean, na.rm = TRUE)
+tt_df <- raster::as.data.frame(tt_plot, xy = TRUE, na.rm = TRUE)
+names(tt_df)[3] <- "hours"
+```
+
+```{r fig2, fig.height=9}
+breaks_h <- unique(c(seq(0, cap_h, by = 4), cap_h))
+labels_h <- as.character(breaks_h)
+labels_h[length(labels_h)] <- paste0(cap_h, "+")
+
+fig2 <- ggplot2::ggplot() +
+  ggplot2::geom_raster(data = tt_df, ggplot2::aes(x = x, y = y, fill = hours)) +
+  ggplot2::geom_sf(data = drc.prov, fill = NA, colour = "white", linewidth = 0.9) +
+  ggplot2::geom_sf(data = drc.prov, fill = NA, colour = "grey25", linewidth = 0.35) +
+  ggplot2::geom_point(
+    data = pts, ggplot2::aes(x = lon, y = lat, shape = type, colour = type), size = 2.2
+  ) +
+  ggplot2::scale_fill_gradientn(
+    colours = c(
+      "#EAF5D7",
+      "#B5E7D0",
+      "#65CBBE",
+      "#159FAC",
+      "#2868A7",
+      "#25366F"
+    ),
+    values = scales::rescale(
+      c(0, 4, 8, 12, 18, 24),
+      from = c(0, 24)
+    ),
+    limits = c(0, cap_h),
+    breaks = breaks_h,
+    labels = labels_h,
+    name = "Motorised time to\nnearest DPS (hours)",
+    na.value = "transparent"
+  ) +
+  ggplot2::scale_shape_manual(values = point_shapes, name = NULL) +
+  ggplot2::scale_colour_manual(values = point_colours, name = NULL) +
+  ggplot2::guides(
+    fill = ggplot2::guide_colourbar(order = 1, barheight = grid::unit(5, "cm")),
+    shape = ggplot2::guide_legend(order = 2),
+    colour = ggplot2::guide_legend(order = 2)
+  ) +
+  ggspatial::annotation_scale(location = "bl", width_hint = 0.25) +
+  ggplot2::coord_sf() +
+  ggplot2::labs(
+    title = paste0("Fig 2. Motorised time to the nearest DPS (", net, "-site network)"),
+    subtitle = paste0("MAP 2020 motorised friction surface; values above ",
+                      cap_h, " h shown as ", cap_h, "+")
+  ) +
+  ggplot2::theme_void(base_size = 11) +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = ggplot2::element_text(hjust = 0.5, colour = "grey30")
+  )
+
+fig2
+ggplot2::ggsave(file.path(out_dir, paste0("Fig2_motorized_time_", net, ".png")),
+                fig2, width = 11, height = 9, dpi = 300, bg = "white")
+```
+
+
+```{r fig2-summary, include=FALSE}
+raw_vals <- raster::values(tt_h_raw)
+raw_vals <- raw_vals[!is.na(raw_vals)]  # Preserve Inf for unreachable land.
+
+pct_within_cap <- if (length(raw_vals)) round(100 * mean(raw_vals <= cap_h), 0) else NA_real_
+pct_beyond_cap <- if (length(raw_vals)) round(100 * mean(raw_vals > cap_h), 0) else NA_real_
+n_unreachable_cells <- sum(is.infinite(raw_vals))
+
+site_tt_h <- raster::extract(tt_h_raw, dest)
+n_sites_cap <- sum(!is.na(site_tt_h) & site_tt_h <= cap_h)
+n_assigned_sites_cap <- sum(is.finite(own_min) & own_min <= cap_h * 60)
+```
+
+**What Figure 2 shows:** Approximately **`r pct_within_cap`%** of valid-friction raster cells have motorised travel times within `r cap_h` hours of a DPS, and **`r pct_beyond_cap`%** are beyond that threshold (including unreachable cells). **`r n_sites_cap` of `r n_sites`** sites are within the threshold of their *nearest* DPS, while **`r n_assigned_sites_cap`** are within the threshold of their *assigned* DPS. The number of valid-friction cells with no connected route is **`r format(n_unreachable_cells, big.mark = ",")`**.
+
+These are percentages of raster cells, not population percentages. With identical DPS origins, this nearest-DPS map should not change between the 26- and 51-site networks; what changes is the sentinel-site distribution.
+
+---
+
+# Table 1: Each DPS to its assigned sentinel sites
+
+Classification uses **unrounded minutes**. Categories are illustrative rather than formal national thresholds.
+
+```{r table1}
+access_cat <- dplyr::case_when(
+  !is.finite(own_min) ~ "Unreachable / no modelled path",
+  own_min < 120 ~ "Under 2 hours",
+  own_min <= 360 ~ "2 to 6 hours",
+  TRUE ~ "More than 6 hours"
+)
+
+table1 <- data.frame(
+  Province = ss$dps_province,
+  Network = ss$network,
+  `Sentinel site` = ss$sentinel_site,
+  `Straight-line distance (km)` = round(straight_km, 1),
+  `Motorised time (hours)` = round(own_min / 60, 1),
+  `Motorised time (24-hour periods)` = round(own_min / (60 * 24), 2),
+  `Effective speed (km/h)` = ifelse(
+    straight_km > 2 & is.finite(eff_speed), round(eff_speed, 1), NA_real_
+  ),
+  `Access category` = access_cat,
+  check.names = FALSE
+) %>% dplyr::arrange(`Motorised time (hours)`)
+
+hrs <- own_min[is.finite(own_min)] / 60
+summ <- if (length(hrs)) {
+  sprintf("Median motorised time %.1f h (IQR %.1f to %.1f h; range %.1f to %.1f h).",
+    median(hrs), unname(quantile(hrs, 0.25)),
+    unname(quantile(hrs, 0.75)), min(hrs), max(hrs))
+} else "No finite motorised travel times could be estimated."
+
+identical_coords <- sum(
+  dps$latitude[dps_index] == ss$latitude &
+  dps$longitude[dps_index] == ss$longitude
+)
+zero_times <- sum(is.finite(own_min) & own_min == 0)
+
+readr::write_excel_csv(
+  table1,
+  file.path(out_dir, paste0("Table1_DPS_to_site_motorized_", net, ".csv"))
+)
+
+ft <- flextable::flextable(table1) %>%
+  flextable::set_caption(paste0(
+    "Table 1. Motorised time from each DPS to assigned sentinel sites (",
+    net, "-site network; n = ", n_sites, ")"
+  )) %>%
+  flextable::add_footer_lines(c(
+    summ,
+    paste0("DPS: Division Provinciale de la Santé. Times calculated with the MAP ",
+      "2020 motorised friction surface; eight-direction movement and a ",
+      params$buffer_km, "-km country buffer."),
+    paste0("Identical DPS–site geocoded coordinate pairs: ", identical_coords,
+      "; zero-hour modelled pairs: ", zero_times, ". Co-location is not verified."),
+    "The network includes 26 existing sites and 25 proposed sites. One additional proposed site in Kasaï-Central is missing."
+  )) %>%
+  flextable::theme_booktabs() %>%
+  flextable::fontsize(size = 9, part = "all") %>%
+  flextable::align(j = 4:7, align = "right", part = "all") %>%
+  flextable::autofit()
+
+ft
+flextable::save_as_docx(
+  ft,
+  path = file.path(out_dir, paste0("Table1_DPS_to_site_motorized_", net, ".docx"))
+)
+```
+
+```{r table1-summary, include=FALSE}
+category_levels <- c("Under 2 hours", "2 to 6 hours", "More than 6 hours",
+                     "Unreachable / no modelled path")
+cat_counts <- table(factor(table1$`Access category`, levels = category_levels))
+far_sites <- table1 %>% dplyr::filter(`Access category` == "More than 6 hours")
+
+# Summary by network stage (labels as stored in ss_51.csv).
+network_summary <- data.frame(
+  Network = ss$network,
+  Hours_raw = own_min / 60,
+  Category = access_cat
+) %>%
+  dplyr::group_by(Network) %>%
+  dplyr::summarise(
+    n_sites = dplyr::n(),
+    n_finite = sum(is.finite(Hours_raw)),
+    median_hours = if (any(is.finite(Hours_raw)))
+      median(Hours_raw[is.finite(Hours_raw)]) else NA_real_,
+    n_over_6 = sum(Category == "More than 6 hours"),
+    .groups = "drop"
+  )
+```
+
+**Summary:** `r summ`
+
+- **`r cat_counts[1]`** sites: under 2 motorised hours.
+- **`r cat_counts[2]`** sites: 2–6 motorised hours.
+- **`r cat_counts[3]`** sites: over 6 hours (`r if (nrow(far_sites)) paste(far_sites$"Sentinel site", collapse = ", ") else "none"`).
+- **`r cat_counts[4]`** sites: no modelled connected route.
+
+There are **`r identical_coords`** identical DPS–sentinel geocodes and **`r zero_times`** zero-time pairs. These can arise from settlement-level location estimates and do not establish physical co-location.
+
+## Comparison of existing and proposed sites
+
+```{r network-summary}
+knitr::kable(network_summary, digits = 1,
+             caption = "Motorised access by network stage")
+readr::write_excel_csv(
+  network_summary,
+  file.path(out_dir, paste0("Table_network_stage_summary_motorized_", net, ".csv"))
+)
+```
+
+The `Network` labels come directly from `ss_51.csv` and should be checked before interpreting differences between existing and proposed sites.
+
+---
+
+# Walking versus motorised times (optional comparison)
+
+The comparison only runs when the saved walking matrix has the **same ordering of DPS names and sentinel-site columns**. Coordinates should also be verified to be the same across both analyses.
+
+```{r walking-comparison}
+walk_file <- file.path(
+  params$data_dir, paste0("network_", net),
+  paste0("time_matrix_walk_", net, "_minutes.csv")
+)
+
+if (file.exists(walk_file)) {
+  walk_csv <- utils::read.csv(
+    walk_file, check.names = FALSE, stringsAsFactors = FALSE,
+    fileEncoding = "UTF-8-BOM"
+  )
+
+  same_pairs <- nrow(walk_csv) == n_dps && ncol(walk_csv) == n_sites + 1 &&
+    identical(as.character(walk_csv[[1]]), as.character(dps$dps_province)) &&
+    identical(names(walk_csv)[-1], as.character(ss$sentinel_site))
+
+  if (same_pairs) {
+    walk_mat <- as.matrix(walk_csv[, -1, drop = FALSE])
+    suppressWarnings(storage.mode(walk_mat) <- "numeric")
+    walk_min <- walk_mat[cbind(dps_index, seq_len(n_sites))]
+
+    comparison <- data.frame(
+      Province = ss$dps_province,
+      Network = ss$network,
+      Sentinel_site = ss$sentinel_site,
+      Walking_hours = round(walk_min / 60, 2),
+      Motorised_hours = round(own_min / 60, 2),
+      Difference_hours = round((walk_min - own_min) / 60, 2),
+      Review = ifelse(is.finite(walk_min) & is.finite(own_min) &
+                        own_min > walk_min + 30,
+                      "Motorised slower by >30 min; investigate", "")
+    )
+
+    readr::write_excel_csv(
+      comparison,
+      file.path(out_dir, paste0("Table2_walking_vs_motorized_", net, ".csv"))
+    )
+    print(knitr::kable(comparison,
+                       caption = "Walking versus motorised DPS-to-site times"))
+  } else {
+    cat("Walking matrix found, but DPS names/site order do not match.\n")
+  }
+} else {
+  cat("Walking matrix not found; motorised analysis continues normally.\n")
+}
+```
+
+---
+
+# Reference: Historical and expanded sentinel networks
+
+The 2003–2005 network used 11 historical provincial divisions and a different set of DPS offices. The 2014 network used 26 DPS offices and 26 sites, with a planned 2021 expansion of 26 additional sites. Only **25 additional proposed locations** are represented in the source dataset, because the proposed additional site for Kasaï-Central is unconfirmed.
+
+The walking analyses and this motorised analysis use the same least-cost routing framework but different friction surfaces. We do not copy numerical walking-time findings into motorised results. For a defensible comparison, use the same coordinates, matching assignments, and compatible travel-surface coverage for both modes.
+
+Adding proposed sentinel sites without moving the 26 DPS offices **does not** change the raster of travel time to the nearest DPS. The scientific comparison is therefore between the assigned-DPS times, accessibility distributions and geographical patterns for existing versus proposed sites.
+
+---
+
+# Limitations
+
+- **Modelled, not observed travel.** Vehicle availability, roads in poor condition, checkpoints, boat transfers and logistical delays are not directly observed.
+- **Temporal mismatch.** A circa-2020 friction surface is not a historical reconstruction of 2014 or 2021 transport conditions.
+- **Transport mode.** The motorised surface does not determine the exact vehicle or guarantee that every route is drivable.
+- **Spatial resolution.** Approximately kilometre-scale friction cells may omit small roads, bridges and last-mile access.
+- **Imprecise coordinates.** Settlement-level geocoding may generate zero-time journeys for facilities that are not physically co-located.
+- **Incomplete proposed network.** A proposed additional sentinel site in Kasaï-Central is missing; the analysis represents 51 of the intended 52 sites.
+- **No field validation.** Actual supervision routes and journey times have not been systematically verified.
+- **Seasonality.** Rainy-season road deterioration and flooding are not separately modelled.
+- **Cross-border movement.** The 50-km buffer allows routing through neighbouring countries; some paths may not be feasible or permitted.
+- **Raster-cell percentages.** They are not population or exact-area proportions; raster cell size varies somewhat with latitude.
+- **Continuous travel costs.** A modelled 24-hour journey is not equivalent to one working day of driving.
+- **Accessibility is not surveillance representativeness.** Site selection must also consider vectors, environment, transmission and operational needs.
+
+---
+
+# Outputs
+
+All motorised results are saved under `r out_dir`.
+
+```{r outputs, echo=FALSE}
+knitr::kable(
+  data.frame(File = list.files(out_dir)),
+  caption = "Files produced by this motorised run"
+)
+```
+
+```{r session, echo=FALSE}
+sessionInfo()
+```
