@@ -1,7 +1,7 @@
 
 # 05 — Results and network comparison
 
-source("00_packages.R")
+source("R/00_packages.R")
 
 out_dir <- "output/unified"
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)

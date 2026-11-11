@@ -1,10 +1,11 @@
 
 # 03 — Travel time from DPS offices to assigned sentinel sites
 
-source("00_packages.R")
+source("R/00_packages.R")
 
 out_dir <- "output/unified"
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(out_dir, "matrices"), recursive = TRUE, showWarnings = FALSE)
 
 # 1. Input data and transition models
 
@@ -232,7 +233,7 @@ calculate_network <- function(mode, network, transition, friction) {
   readr::write_csv(
     matrix_table,
     file.path(
-      out_dir,
+      file.path(out_dir, "matrices"),
       paste0(
         "Matrix_DPS_to_sites_",
         mode, "_", network, "_minutes.csv"

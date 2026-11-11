@@ -14,12 +14,12 @@ run_analysis <- function(full_rebuild = FALSE) {
   )
 
   scripts <- c(
-    "00_packages.R",
-    "01_spatial_expansion_sentinel_sites.R",
-    "02_accessibility.R",
-    "03_assigned_travel_time.R",
-    "04_walking_routes.R",
-    "05_results_summary.R"
+    "R/00_packages.R",
+    "R/01_spatial_expansion_sentinel_sites.R",
+    "R/02_accessibility.R",
+    "R/03_assigned_travel_time.R",
+    "R/04_walking_routes.R",
+    "R/05_results_summary.R"
   )
 
   stopifnot(all(file.exists(scripts)))
@@ -39,7 +39,7 @@ run_analysis <- function(full_rebuild = FALSE) {
     # a full rebuild has been explicitly requested.
 
     if (
-      script == "03_assigned_travel_time.R" &&
+      script == "R/03_assigned_travel_time.R" &&
       !full_rebuild &&
       file.exists(assigned_file)
     ) {

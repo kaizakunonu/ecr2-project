@@ -9,7 +9,7 @@ A research project (MAP Early Career Researcher study, MoDD Africa / Ifakara Hea
 The documents disagree on scope, so check which one a task is about:
 - `proposal.qmd` is **provincial**: Kasaï-Central, its 26 health zones, anchored on entomological data.
 - `ecr_progress report.qmd` is **national**: 26 provinces, one sentinel site each, open geospatial data only.
-- `sentinel-accessibility-outline.md` explains this split and recommends treating them as two papers (P1 national, P2 Kasaï-Central).
+- `docs/research/sentinel-accessibility-outline.md` explains this split and recommends treating them as two papers (P1 national, P2 Kasaï-Central).
 
 ## Environment
 
@@ -66,7 +66,7 @@ The test suite has no per-test selection. It is a single script of `ok()` assert
 
 ## Data flow
 
-`DRC_Health_Zones_Sentinel_Sites.xlsx` (untracked) → `extract_sentinel_sites_26.py` → `geocoding/input/drc_sentinel_sites_26.csv` → `drc-geocoding-workflow.qmd` → `geocoding/output/` (git-ignored).
+`data/input/DRC_Health_Zones_Sentinel_Sites.xlsx` (untracked) → `extract_sentinel_sites_26.py` → `geocoding/input/drc_sentinel_sites_26.csv` → `drc-geocoding-workflow.qmd` → `geocoding/output/` (git-ignored).
 
 The extractor combines two blocks from the workbook's `Metadata` sheet: the original 11 sites, which use pre-2015 province names, and a 15-site delta from 2014. It relabels the 11 onto the post-2015 provinces through `CROSSWALK_2015`, which comes from geography and not from the workbook. A closure check exits non-zero if the 11 + 15 provinces do not exactly equal the workbook's 26. The workbook's 52-site column is deliberately ignored.
 

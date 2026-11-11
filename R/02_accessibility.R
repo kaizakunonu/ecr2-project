@@ -2,7 +2,7 @@
 # 02 — Accessibility analysis in DRC
 # Reproducible walking and motorised travel-time modelling
 
-source("00_packages.R")
+source("R/00_packages.R")
 
 # 1. Settings
 

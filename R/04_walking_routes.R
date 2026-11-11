@@ -1,7 +1,7 @@
 
 # 04 — Walking routes and distances to assigned sentinel sites
 
-source("00_packages.R")
+source("R/00_packages.R")
 
 # FALSE: preserve existing validated route outputs
 # TRUE: rebuild all routes from the transition model
