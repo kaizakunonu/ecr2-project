@@ -244,81 +244,154 @@ locations for future sentinel surveillance in Kasaï-Central Province.
 ### WP1. Seasonal Accessibility Assessment
 
 #### Rationale
-Accessibility is a key determinant of the operational feasibility of entomological surveillance. Seasonal rainfall can affect road conditions and travel times, potentially limiting access to surveillance locations during parts of the year.
+
+Accessibility is a key determinant of the operational feasibility of
+entomological surveillance. Seasonal rainfall can affect road conditions
+and travel times, potentially limiting access to surveillance locations
+during parts of the year.
 
 ### Methods
-Travel-time surfaces will be generated to quantify accessibility across Kasaï-Central Province under different seasonal conditions. These surfaces will be used to assess the accessibility of existing and potential sentinel surveillance locations and to identify areas where seasonal conditions may constrain surveillance activities.
+
+Travel-time surfaces will be generated to quantify accessibility across
+Kasaï-Central Province under different seasonal conditions. These
+surfaces will be used to assess the accessibility of existing and
+potential sentinel surveillance locations and to identify areas where
+seasonal conditions may constrain surveillance activities.
 
 ### Main Outputs
 
-- **Seasonal accessibility maps** describing travel times to existing and potential surveillance locations across Kasaï-Central Province under different seasonal conditions.
+- **Seasonal accessibility maps** describing travel times to existing
+  and potential surveillance locations across Kasaï-Central Province
+  under different seasonal conditions.
 
 ### WP2. Environmental Representativeness Assessment
 
 #### Rationale
-A sentinel surveillance network should adequately represent the environmental diversity of the province to ensure that entomological observations reflect the range of conditions influencing malaria vector distribution. Assessing environmental representativeness is therefore essential for determining whether the current surveillance network captures the environmental settings relevant to malaria vectors across Kasaï-Central Province.
+
+A sentinel surveillance network should adequately represent the
+environmental diversity of the province to ensure that entomological
+observations reflect the range of conditions influencing malaria vector
+distribution. Assessing environmental representativeness is therefore
+essential for determining whether the current surveillance network
+captures the environmental settings relevant to malaria vectors across
+Kasaï-Central Province.
 
 ### Methods
-Environmental suitability modelling will be used to characterise conditions associated with malaria vector occurrence across Kasaï-Central Province. Vector occurrence records obtained from the Vector Atlas will be combined with environmental covariates, including rainfall, land cover, vegetation indices, elevation, and surface water, to generate a province-wide environmental suitability surface. The resulting map will be used to assess how well the environmental conditions represented by the current sentinel site reflect the broader environmental diversity of the province.
+
+Environmental suitability modelling will be used to characterise
+conditions associated with malaria vector occurrence across
+Kasaï-Central Province. Vector occurrence records obtained from the
+Vector Atlas will be combined with environmental covariates, including
+rainfall, land cover, vegetation indices, elevation, and surface water,
+to generate a province-wide environmental suitability surface. The
+resulting map will be used to assess how well the environmental
+conditions represented by the current sentinel site reflect the broader
+environmental diversity of the province.
 
 ### Main Outputs
 
-- **Environmental suitability map** identifying areas with environmental conditions favourable for malaria vectors across Kasaï-Central Province.
+- **Environmental suitability map** identifying areas with environmental
+  conditions favourable for malaria vectors across Kasaï-Central
+  Province.
 
 ### WP3. Surveillance Gap Analysis
 
 #### Rationale
-Surveillance gaps may occur when areas of environmental importance are not represented within the current surveillance network or when seasonally inaccessible locations limit surveillance activities. Identifying these gaps is necessary for improving the representativeness and coverage of entomological surveillance across the province.
+
+Surveillance gaps may occur when areas of environmental importance are
+not represented within the current surveillance network or when
+seasonally inaccessible locations limit surveillance activities.
+Identifying these gaps is necessary for improving the representativeness
+and coverage of entomological surveillance across the province.
 
 ### Methods
-Outputs from the seasonal accessibility assessment (WP1) and environmental representativeness assessment (WP2) will be integrated to identify areas that are poorly represented by the current surveillance network. Particular attention will be given to locations that combine high environmental suitability with limited accessibility or lack of surveillance coverage.
+
+Outputs from the seasonal accessibility assessment (WP1) and
+environmental representativeness assessment (WP2) will be integrated to
+identify areas that are poorly represented by the current surveillance
+network. Particular attention will be given to locations that combine
+high environmental suitability with limited accessibility or lack of
+surveillance coverage.
 
 ### Main Outputs
 
-- **Surveillance coverage gap map** identifying priority areas that are currently underrepresented by the sentinel surveillance network.
+- **Surveillance coverage gap map** identifying priority areas that are
+  currently underrepresented by the sentinel surveillance network.
 
 ### WP4. Sentinel Site Prioritisation
 
 #### Rationale
-Improving surveillance coverage requires the identification of locations that are both operationally accessible and environmentally representative. Integrating these considerations can support evidence-based selection of future sentinel sites.
+
+Improving surveillance coverage requires the identification of locations
+that are both operationally accessible and environmentally
+representative. Integrating these considerations can support
+evidence-based selection of future sentinel sites.
 
 ### Methods
-Accessibility, environmental representativeness, and surveillance coverage information generated in WP1–WP3 will be combined within a spatial prioritisation framework. Candidate locations will be evaluated according to their potential contribution to improving surveillance coverage while remaining operationally accessible across seasons.
+
+Accessibility, environmental representativeness, and surveillance
+coverage information generated in WP1–WP3 will be combined within a
+spatial prioritisation framework. Candidate locations will be evaluated
+according to their potential contribution to improving surveillance
+coverage while remaining operationally accessible across seasons.
 
 ### Main Outputs
 
-- **Ranked list of priority surveillance locations** for future entomological surveillance in Kasaï-Central Province.
-
+- **Ranked list of priority surveillance locations** for future
+  entomological surveillance in Kasaï-Central Province.
 
 ### WP4. Sentinel Site Prioritisation
 
 #### Rationale
-Improving surveillance coverage requires the identification of locations that are both operationally accessible and environmentally representative. Integrating these considerations can support evidence-based selection of future sentinel sites.
+
+Improving surveillance coverage requires the identification of locations
+that are both operationally accessible and environmentally
+representative. Integrating these considerations can support
+evidence-based selection of future sentinel sites.
 
 ### Methods
-Accessibility, environmental representativeness, and surveillance coverage information generated in WP1–WP3 will be combined within a spatial prioritisation framework. Candidate locations will be evaluated according to their potential contribution to improving surveillance coverage while remaining operationally accessible across seasons.
+
+Accessibility, environmental representativeness, and surveillance
+coverage information generated in WP1–WP3 will be combined within a
+spatial prioritisation framework. Candidate locations will be evaluated
+according to their potential contribution to improving surveillance
+coverage while remaining operationally accessible across seasons.
 
 ### Main Outputs
 
-- **Ranked list of priority surveillance locations** for future entomological surveillance in Kasaï-Central Province.
+- **Ranked list of priority surveillance locations** for future
+  entomological surveillance in Kasaï-Central Province.
 
 ## Expected Impact
 
-The project will provide evidence to support the selection of sentinel surveillance sites that are both operationally accessible across seasons and environmentally representative of conditions across Kasaï-Central Province.
-The findings are expected to:
-- Improve understanding of seasonal accessibility constraints affecting  entomological surveillance activities;
-- Identify geographic and environmental areas that are underrepresented  by the current surveillance network;
-- Support evidence-based prioritisation of future sentinel surveillance  locations; and
-- Strengthen malaria vector surveillance and vector-control planning in  Kasaï-Central Province.
-
+The project will provide evidence to support the selection of sentinel
+surveillance sites that are both operationally accessible across seasons
+and environmentally representative of conditions across Kasaï-Central
+Province. The findings are expected to: - Improve understanding of
+seasonal accessibility constraints affecting entomological surveillance
+activities; - Identify geographic and environmental areas that are
+underrepresented by the current surveillance network; - Support
+evidence-based prioritisation of future sentinel surveillance locations;
+and - Strengthen malaria vector surveillance and vector-control planning
+in Kasaï-Central Province.
 
 ## Next steps
 
 Immediate next steps are to (1) confirm scope and lead research question
-with mentors, (2) Compile and harmonise the health-system, entomological, geographic, environmental, and climatic datasets required for the study,  and (3) develop an initial travel-time surface for a selected health zone, with support from Christine, as a proof of concept for the accessibility modelling framework.
+with mentors, (2) Compile and harmonise the health-system,
+entomological, geographic, environmental, and climatic datasets required
+for the study, and (3) develop an initial travel-time surface for a
+selected health zone, with support from Christine, as a proof of concept
+for the accessibility modelling framework.
 
 ## Key reference
 
-Weiss *et al.* and related accessibility work motivate the core method; the directly relevant methodological reference is *Quantifying geographic accessibility to improve efficiency of entomological monitoring* ([bioRxiv 10.1101/779561v2](https://www.biorxiv.org/content/10.1101/779561v2.full)).
+Weiss *et al.* and related accessibility work motivate the core method;
+the directly relevant methodological reference is *Quantifying
+geographic accessibility to improve efficiency of entomological
+monitoring* ([bioRxiv
+10.1101/779561v2](https://www.biorxiv.org/content/10.1101/779561v2.full)).
 
-Longbottom *et al.* (2020) Quantifying geographic accessibility to improve efficiency of entomological monitoring. PLOS Neglected Tropical Diseases 14(3): e0008096. https://doi.org/10.1371/journal.pntd.0008096
+Longbottom *et al.* (2020) Quantifying geographic accessibility to
+improve efficiency of entomological monitoring. PLOS Neglected Tropical
+Diseases 14(3): e0008096. https://doi.org/10.1371/journal.pntd.0008096

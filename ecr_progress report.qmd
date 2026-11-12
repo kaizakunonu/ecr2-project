@@ -1,100 +1,928 @@
+
 ---
 title: "Mapping the Geographic Accessibility of Sentinel Sites for Entomological Surveillance Across the Democratic Republic of the Congo"
-subtitle: "Progress report"
+subtitle: "Final Report | MAP Dar ECR Development Program, Cohort 2 (2026)"
 author:
   - name: "Kaiza Ilomo"
     affiliation: "Ifakara Health Institute"
     email: kilomo@ihi.or.tz
-  - name: "Arsene Bokulu"
+  - name: "Arsène Bokulu"
     affiliation: "Institut National de Recherche Biomédicale (INRB)"
     email: arsenebokulu01@gmail.com
   - name: "Victoire Nsabatien"
     affiliation: "The Kids Research Institute Australia"
     email: Victoire.Nsabatien@thekids.org.au
-date: "2026-08-24"
-format: html
+date: "2026-10-21"
+bibliography: ecr_final_report.bib
+link-citations: true
+number-sections: true
+
+execute:
+  echo: false
+  warning: false
+  message: false
+
+format:
+  pdf:
+    pdf-engine: xelatex
+    papersize: a4
+    fontsize: 10pt
+    geometry:
+      - margin=2cm
+    colorlinks: true
+    fig-pos: "htbp"
+  html:
+    toc: true
+    embed-resources: true
+    fig-cap-location: bottom
 ---
+
+```{r}
+#| label: setup
+#| include: false
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(readr)
+  library(knitr)
+  library(sf)
+  library(terra)
+})
+
+out_dir <- "output/unified"
+
+read_output <- function(filename) {
+  read_csv(
+    file.path(out_dir, filename),
+    show_col_types = FALSE
+  )
+}
+
+journeys <- read_output(
+  "Table_assigned_travel_times.csv"
+)
+
+routes <- read_output(
+  "walking_route_distances.csv"
+)
+
+coverage <- read_output(
+  "Table_spatial_accessibility_summary.csv"
+)
+
+validation <- read_output(
+  "Table_accessibility_validation.csv"
+)
+
+ss51 <- read_csv(
+  "output/network_51/ss_51.csv",
+  show_col_types = FALSE
+)
+
+stopifnot(
+  nrow(journeys) == 176,
+  nrow(routes) == 88,
+  nrow(coverage) == 30,
+  nrow(validation) == 10,
+  all(validation$missing_values == 0),
+  all(validation$origins == validation$zero_hour_origins)
+)
+
+clean_site <- function(x) {
+  z <- iconv(
+    trimws(as.character(x)),
+    to = "ASCII//TRANSLIT"
+  )
+  z[is.na(z)] <- x[is.na(z)]
+  gsub("[^a-z0-9]", "", tolower(z))
+}
+
+walking <- journeys |>
+  filter(mode == "walking") |>
+  transmute(
+    network,
+    province,
+    sentinel_site,
+    site_key = clean_site(sentinel_site),
+    dps_office,
+    dps_longitude,
+    dps_latitude,
+    site_longitude,
+    site_latitude,
+    straight_km,
+    walk_h = travel_hours
+  )
+
+motorized <- journeys |>
+  filter(mode == "motorized") |>
+  transmute(
+    network,
+    province,
+    site_key = clean_site(sentinel_site),
+    motor_h = travel_hours
+  )
+
+join_keys <- c(
+  "network",
+  "province",
+  "site_key"
+)
+
+stopifnot(
+  nrow(walking) == 88,
+  nrow(motorized) == 88,
+  !anyDuplicated(walking[join_keys]),
+  !anyDuplicated(motorized[join_keys])
+)
+
+pairs <- walking |>
+  inner_join(
+    motorized,
+    by = join_keys
+  )
+
+route_data <- routes |>
+  mutate(
+    site_key = clean_site(sentinel_site)
+  ) |>
+  select(
+    network,
+    province,
+    site_key,
+    walking_route_km
+  )
+
+stopifnot(
+  !anyDuplicated(route_data[join_keys])
+)
+
+pairs <- pairs |>
+  left_join(
+    route_data,
+    by = join_keys
+  )
+
+stopifnot(
+  nrow(pairs) == 88,
+  !anyNA(pairs$walking_route_km)
+)
+
+net11 <- filter(pairs, network == 11)
+net26 <- filter(pairs, network == 26)
+net51 <- filter(pairs, network == 51)
+
+stopifnot(
+  nrow(net11) == 11,
+  nrow(net26) == 26,
+  nrow(net51) == 51
+)
+
+# Historical sites under current DPS assignments
+
+historical_keys <- unique(net11$site_key)
+
+historical_current <- net26 |>
+  filter(site_key %in% historical_keys)
+
+additions2014 <- net26 |>
+  filter(!site_key %in% historical_keys)
+
+stopifnot(
+  nrow(historical_current) == 11,
+  nrow(additions2014) == 15
+)
+
+# Proposed additions
+
+proposed_keys <- ss51 |>
+  filter(network == "2021_expansion") |>
+  pull(sentinel_site) |>
+  clean_site()
+
+stopifnot(
+  length(proposed_keys) == 25,
+  !anyDuplicated(proposed_keys)
+)
+
+additions2021 <- net51 |>
+  filter(site_key %in% proposed_keys)
+
+stopifnot(nrow(additions2021) == 25)
+
+# Historical reassignment comparison
+
+reassignment <- net11 |>
+  select(
+    site_key,
+    sentinel_site,
+    historical_province = province,
+    historical_dps = dps_office,
+    old_lon = dps_longitude,
+    old_lat = dps_latitude,
+    old_walk_h = walk_h
+  ) |>
+  inner_join(
+    historical_current |>
+      select(
+        site_key,
+        current_province = province,
+        current_dps = dps_office,
+        new_lon = dps_longitude,
+        new_lat = dps_latitude,
+        new_walk_h = walk_h
+      ),
+    by = "site_key"
+  ) |>
+  mutate(
+    different_dps_location =
+      abs(old_lon - new_lon) > 1e-6 |
+      abs(old_lat - new_lat) > 1e-6,
+
+    walk_difference_h = new_walk_h - old_walk_h,
+
+    direction = case_when(
+      walk_difference_h < -0.05 ~ "Shorter",
+      walk_difference_h > 0.05 ~ "Longer",
+      TRUE ~ "Unchanged"
+    )
+  )
+
+stopifnot(nrow(reassignment) == 11)
+
+# Formatting
+
+f1 <- function(x) {
+  sprintf("%.1f", as.numeric(x))
+}
+
+med_iqr <- function(x) {
+  q <- quantile(
+    x,
+    c(0.25, 0.50, 0.75),
+    na.rm = TRUE
+  )
+
+  sprintf(
+    "%.1f (%.1f–%.1f)",
+    q[2], q[1], q[3]
+  )
+}
+
+n_pct <- function(x) {
+  sprintf(
+    "%d (%.0f%%)",
+    sum(x, na.rm = TRUE),
+    100 * mean(x, na.rm = TRUE)
+  )
+}
+
+coverage_pct <- function(n, m, h) {
+
+  value <- coverage |>
+    filter(
+      network == n,
+      mode == m,
+      threshold_hours == h
+    ) |>
+    pull(percent_modelled_area)
+
+  stopifnot(
+    length(value) == 1,
+    is.finite(value)
+  )
+
+  as.numeric(value)
+}
+
+# Average coverage gain per added site
+
+coverage_gain <- tibble(
+  Stage = c("2014", "2021"),
+  Added = c(15, 25),
+
+  Walking = c(
+    (
+      coverage_pct(26, "walking", 24) -
+      coverage_pct(11, "walking", 24)
+    ) / 15,
+
+    (
+      coverage_pct(51, "walking", 24) -
+      coverage_pct(26, "walking", 24)
+    ) / 25
+  ),
+
+  Motorized = c(
+    (
+      coverage_pct(26, "motorized", 6) -
+      coverage_pct(11, "motorized", 6)
+    ) / 15,
+
+    (
+      coverage_pct(51, "motorized", 6) -
+      coverage_pct(26, "motorized", 6)
+    ) / 25
+  )
+)
+
+# Unique DPS-to-site coordinate pairs
+
+pairs <- pairs |>
+  mutate(
+    route_key = sprintf(
+      "%.8f|%.8f|%.8f|%.8f",
+      dps_longitude,
+      dps_latitude,
+      site_longitude,
+      site_latitude
+    )
+  )
+
+unique_pairs <- pairs |>
+  arrange(desc(network)) |>
+  distinct(route_key, .keep_all = TRUE)
+
+stopifnot(nrow(unique_pairs) == 52)
+
+# Required figures
+
+figure_files <- file.path(
+  out_dir,
+  c(
+    "Figure1_network_evolution_clean.png",
+    "Figure1_network_evolution_labeled.png",
+    "Figure2_walking_accessibility_final.png",
+    "Figure3_motorized_accessibility_final.png",
+    "Figure4_assigned_travel_time_distributions.png",
+    "FigureS1_walking_nearest_sentinel_sites.png",
+    "FigureS2_motorized_nearest_sentinel_sites.png"
+  )
+)
+
+stopifnot(all(file.exists(figure_files)))
+```
+
+# Abstract {.unnumbered}
+
+**Background:** Entomological surveillance provides essential information for malaria vector control in the Democratic Republic of the Congo (DRC), where malaria remains a major public health challenge. The National Malaria Control Programme (NMCP) has progressively expanded its entomological sentinel surveillance network from 11 sites established during 2003–2005 to 26 sites in 2014, with further expansion planned. However, the implications of these changes for geographical coverage and operational accessibility have not been systematically assessed. This study evaluated the geographical distribution and accessibility of sentinel sites across the historical 11-site, established 26-site and proposed 51-site network configurations.
+
+**Methods:** Sentinel-site and Provincial Health Division (DPS) locations were compiled from programme records and geocoded. Using the Malaria Atlas Project (MAP) 2020 walking-only and motorised friction surfaces, we estimated least-cost travel times between DPS offices and their assigned sentinel sites, as well as national accessibility to the nearest DPS office and the nearest sentinel site. Modelled walking-route distances were also calculated. All network configurations were evaluated under the same friction-surface assumptions.
+
+**Results:** Median walking travel time between DPS offices and assigned sentinel sites was `r f1(median(net11$walk_h))` hours for the historical 11-site network, `r f1(median(net26$walk_h))` hours for the 26-site network and `r f1(median(net51$walk_h))` hours for the proposed 51-site configuration. Corresponding motorised travel times were `r f1(median(net11$motor_h))`, `r f1(median(net26$motor_h))` and `r f1(median(net51$motor_h))` hours. The 25 proposed additional sites had a median walking time of `r f1(median(additions2021$walk_h))` hours, with `r sum(additions2021$walk_h > 24)` requiring more than 24 hours of modelled walking travel. The percentage of modelled national area within 24 walking hours of a sentinel site increased from `r f1(coverage_pct(11, "walking", 24))`% to `r f1(coverage_pct(26, "walking", 24))`% and `r f1(coverage_pct(51, "walking", 24))`% across the three network configurations. The corresponding percentages within six hours of motorised travel were `r f1(coverage_pct(11, "motorized", 6))`%, `r f1(coverage_pct(26, "motorized", 6))`% and `r f1(coverage_pct(51, "motorized", 6))`%.
+
+**Conclusion:** Expansion of the sentinel-site network improved geographical accessibility to surveillance locations but increased travel requirements for some DPS-to-site journeys, particularly among proposed additional sites. These findings highlight the distinction between geographical coverage and operational accessibility. Future network planning should consider both, together with ecological representativeness, sampling frequency and operational resources.
+
+*Keywords:* malaria; entomological surveillance; sentinel sites; geographic accessibility; least-cost modelling; Democratic Republic of the Congo.
 
 # Introduction
 
-Malaria remains a major public health challenge in the Democratic Republic of the Congo (DRC), accounting for a substantial proportion of the global malaria burden (Adam et al., 2026; Sugg et al., 2026).
+Malaria remains a major public health challenge in the Democratic Republic of the Congo (DRC), which accounts for a substantial proportion of the global malaria burden [@who2025world]. Recent national evidence has also documented considerable geographical and socioeconomic variation in malaria infection among children under five years of age [@adam2026prevalence]. These findings highlight the continued importance of effective malaria prevention and surveillance systems to support evidence-based interventions.
 
-Malaria surveillance in the DRC operates through complementary routine and sentinel surveillance systems. Routine surveillance data are reported through the Système National d'Information Sanitaire (SNIS/DHIS2), while sentinel surveillance provides more detailed information from selected locations, including indicators relevant to malaria epidemiology, treatment efficacy and vector surveillance (Adam et al., 2026).
+Malaria surveillance in the DRC operates through complementary routine and sentinel surveillance systems. Routine surveillance data are reported through the *Système National d'Information Sanitaire* (SNIS/DHIS2), providing information on malaria cases and other health indicators collected by health facilities. Sentinel surveillance complements routine reporting by generating more detailed information from selected locations, including indicators relevant to malaria epidemiology, treatment efficacy and vector surveillance. Although these systems serve different purposes, both contribute to the information required by the NMCP for malaria-control planning.
 
-Entomological surveillance is a critical component of malaria control programmes because it provides information on vector distribution, abundance, behaviour, and insecticide resistance to support evidence-based decision-making for vector control interventions (Kouassi et al., 2023). The usefulness of such surveillance depends partly on the spatial distribution and representativeness of sampling locations, particularly in environmentally heterogeneous settings where mosquito populations vary across space and time (Sedda et al., 2019; Sedda et al., 2026). Sedda et al. (2019) demonstrated that ecological stratification and model-based sampling can improve the efficiency of mosquito-surveillance designs, while the more recent Entomological Adaptive Surveillance Framework showed the value of evidence-based, adaptive site selection under spatial and temporal heterogeneity.
+Entomological surveillance is a critical component of malaria-control programmes because it provides information on vector distribution, abundance, behaviour and insecticide resistance to support the selection, implementation and evaluation of vector-control interventions [@kouassi2023entomological]. However, the usefulness of entomological surveillance depends partly on the spatial distribution and representativeness of sampling locations, particularly in environmentally heterogeneous settings where mosquito populations and transmission patterns may vary across space and time. Ecological stratification and model-based sampling approaches have demonstrated the potential to improve surveillance efficiency and the representation of environmental heterogeneity [@sedda2019improved; @sedda2026evaluation].
 
-In DRC, the sentinel surveillance network was established in 2003 with 11 sites supported initially by USAID/BASICS and subsequently by the Global Fund. Following the administrative reorganization of the country into 26 provinces, the network was reconfigured to 26 sites in November 2014. In 2023, a further expansion to 52 sites, corresponding to two sentinel sites per province, was approved.
+In the DRC, the entomological sentinel surveillance network was initially established in 2003 with 11 sites, supported through programmes including USAID/BASICS and subsequently the Global Fund, according to NMCP records compiled by the study team. The network was subsequently reconfigured to include 26 sites in November 2014. The study team's progress report also records approval in 2023 of a further expansion to 52 sites, corresponding to an intended two sites per province. The present analysis used the 25 additional locations identified in the available 2021 selection records, bringing the evaluated configuration to 51 sites. The chronology of site selection and formal programme approval should be confirmed against the original NMCP documentation before publication.
 
-A sentinel site does not encompass an entire health zone but consists of a defined surveillance area within a selected health zone. Each site comprises the reference general hospital and three health areas located outside the hospital's catchment area, including two represented by public health centres and one by a private health facility, under the coordination of the health-zone management team. Thus, a network of 26 sentinel sites represents only a small proportion of the country's health zones, raising questions about the geographic coverage and operational accessibility of the surveillance system.
+In the DRC, the health system is organised into health zones (*zones de santé*), which are further subdivided into health areas (*aires de santé*). The number of health areas within each health zone varies, partly in relation to population size, distribution and density. A sentinel site does not encompass an entire health zone but represents a defined surveillance area within a selected health zone. According to the programme description compiled by the study team, each site comprises the general referral hospital and three selected health areas outside the hospital's immediate catchment area, including two served by public health centres and one by a private health facility, under the coordination of the health-zone management team. Consequently, a network of 26 sentinel sites represents only a limited proportion of the country's health zones, raising questions about the geographical distribution and environmental conditions represented by the surveillance system.
 
-Importantly, the performance of a surveillance network depends not only on spatial or ecological representativeness but also on the feasibility of repeatedly accessing surveillance locations. Entomological surveillance requires regular field visits for mosquito collection, supervision, transport of samples and other logistical activities. Poorly accessible sites may therefore increase travel time and operational costs and constrain the frequency and sustainability of surveillance. Longbottom et al. (2020) demonstrated that integrating geographic accessibility with entomological surveillance objectives can identify monitoring locations that provide useful information while reducing travel costs.
+Importantly, the performance of a surveillance network depends not only on its geographical or ecological representativeness but also on the feasibility of repeatedly accessing surveillance locations. Entomological surveillance requires regular field visits for mosquito collection, supervision, specimen transportation and other logistical activities. Sites that are difficult to reach may increase travel time and operational costs, potentially constraining the frequency and sustainability of surveillance activities. Longbottom et al. [@longbottom2020quantifying] demonstrated that integrating geographical accessibility with entomological monitoring objectives can help identify surveillance locations that provide useful information while accounting for travel requirements.
 
-These considerations are particularly relevant in the DRC, a geographically extensive and conflict-affected country that hosts large numbers of internally displaced populations, as well as refugees and returnees from neighbouring countries affected by regional insecurity. The country is characterized by substantial ecological heterogeneity, large travel distances, uneven transport infrastructure, seasonal variations, and persistent insecurity in some regions. Together, these factors can increase the logistical burden of routine entomological surveillance, hinder access to surveillance sites, and affect the timeliness, frequency, and sustainability of entomological data collection efforts.
+These considerations are particularly relevant in the DRC, a geographically extensive country characterised by substantial ecological heterogeneity, large travel distances, uneven transport infrastructure, seasonal variations in accessibility and insecurity in some regions. Together, these factors can increase the logistical burden of routine entomological surveillance, hinder access to selected locations and affect the timeliness and frequency of data collection.
 
-To strengthen malaria vector monitoring, the National Malaria Control Programme (NMCP) has progressively expanded its sentinel-site network from 11 sites to 26 sites, with plans for further expansion to 52 sites. While this expansion is intended to improve surveillance coverage and representativeness, its impact on geographic accessibility has not been systematically assessed. In particular, it remains unclear if the additional sites reduce travel distances and travel times between Provincial Health Divisions and sentinel sites, thereby improving the operational efficiency of the surveillance network.
+To strengthen malaria-vector monitoring, the NMCP has progressively expanded the sentinel surveillance network. Although network expansion increases the number of surveillance locations, it does not necessarily guarantee improved operational accessibility or ecological representativeness. In particular, increasing the geographical reach of the network may require the inclusion of locations that are more distant from their supervising Provincial Health Divisions.
 
-This study evaluates the extent to which the expansion of sentinel sites has improved geographic coverage and accessibility for entomological surveillance across the Democratic Republic of the Congo.
+This study evaluates how successive expansions of the DRC entomological sentinel-site network have affected geographical coverage and accessibility, providing evidence to support future surveillance planning and the consideration of operational constraints in sentinel-site selection.
 
 # Statement of the problem
 
-The DRC has progressively expanded its malaria sentinel-surveillance network from 11 to 26 sites, with a further expansion to 52 sites proposed. However, increasing the number of surveillance sites does not necessarily guarantee improved operational accessibility. In a country characterized by vast geographic distances, uneven transport infrastructure and seasonal accessibility constraints, the location of sentinel sites may substantially influence the time and resources required to conduct routine entomological surveillance.
+The DRC has progressively expanded its entomological sentinel-site network from 11 historical sites to 26 established sites, with further expansion planned. However, increasing the number of surveillance sites does not necessarily result in improved operational accessibility. In a country characterised by extensive geographical distances, uneven transport infrastructure and seasonal accessibility constraints, the location of sentinel sites may substantially influence the time and resources required to conduct routine entomological surveillance.
 
-Although previous studies have demonstrated the importance of spatially representative sampling and geographic accessibility for efficient entomological monitoring (Sedda et al., 2019; Longbottom et al., 2020; Sedda et al., 2026), the effect of successive sentinel-network expansions on geographic accessibility in the DRC has not been systematically quantified. This study addresses this gap by comparing geographic coverage, distance and travel time under the historical 11-site, current 26-site and proposed 52-site surveillance networks.
+Although previous studies have demonstrated the importance of geographical accessibility and spatially representative sampling for efficient entomological monitoring [@sedda2019improved; @longbottom2020quantifying; @sedda2026evaluation], the effects of successive network configurations on geographical accessibility in the DRC have not been systematically quantified.
+
+Furthermore, two different dimensions of accessibility need to be distinguished. First, the travel time between each DPS office and its assigned sentinel site provides information on potential supervision and logistical requirements. Second, the accessibility of the nearest sentinel site across the country describes the geographical reach of the surveillance network. Expansion could improve the latter while increasing the former for newly introduced, more remote locations.
+
+This study addresses these gaps by comparing the geographical distribution, modelled travel times and walking-route distances across the historical 11-site, established 26-site and proposed 51-site network configurations.
 
 # Research question
 
-To what extent do successive expansions of the malaria sentinel-site network improve geographic coverage and accessibility for entomological surveillance across the Democratic Republic of the Congo?
+To what extent have successive expansions of the DRC malaria entomological sentinel-site network changed geographical coverage and accessibility, and what are the implications for surveillance operations?
 
-# Objectives
+# Research objectives
 
-**Objective 1.** Characterize and compare the spatial distribution and geographic coverage of the 11-site, 26-site and proposed 52-site surveillance networks.
+**Objective 1.** To characterise and compare the spatial distribution of sentinel sites under the historical 11-site, established 26-site and proposed 51-site network configurations.
 
-**Objective 2.** Estimate and compare motorized and walking travel times between the capital city, Provincial Health Divisions and sentinel sites under each network configuration.
+**Objective 2.** To estimate and compare motorised and walking travel times between Provincial Health Division offices and their assigned sentinel sites under each network configuration.
 
-**Objective 3.** Quantify and compare travel distances between the capital city, Provincial Health Divisions and sentinel sites under each network configuration.
+**Objective 3.** To assess changes in national geographical accessibility to the nearest DPS office and the nearest sentinel site across network configurations.
 
-# Approach
+**Objective 4.** To quantify modelled walking-route distances between DPS offices and their assigned sentinel sites and examine their implications for entomological surveillance planning.
 
-The study is being conducted in the Democratic Republic of the Congo (DRC), covering all 26 provinces. The analysis evaluates geographic accessibility under three sentinel-site network configurations: the historical 11-site network, the current 26-site network, and the proposed 52-site network.
+# Methods
 
-Data on the historical development and planned expansion of the malaria sentinel surveillance network were compiled by Victoire Nsabatien from unpublished National Malaria Control Programme (NMCP) documents. Historical and current Provincial Health Division names were compiled and standardized by Arsène Bokulu. These records were used to identify Provincial Health Division sites included in the historical 11 provinces and the current 26 provinces.
+## Study area
 
-Geographic coordinates for sentinel sites were obtained through the geocoding workflow developed by Kaiza Ilomo. The workflow uses the Google Maps Geocoding API to identify sentinel-site locations while constraining searches by province and applying a series of quality-control procedures to minimize incorrect geographic matches. The workflow records the source and confidence level of each geocoded location and flags uncertain locations for manual review.
+The study was conducted across the Democratic Republic of the Congo, covering the country's 26 current provinces. The DRC has an area of approximately 2.3 million km² and encompasses diverse ecological landscapes, including tropical forests, savannas, wetlands, large river systems and mountainous areas. Transport infrastructure is unevenly distributed, with accessibility influenced by road connectivity, topography and other geographical barriers.
 
-At the time of reporting, 25 of the 26 sites in the current surveillance network have been assigned coordinates, with most classified as high-confidence matches. The remaining unresolved or lower-confidence location (Mikalayi, Kasaï-Central Province) is currently under review by the ECR team. In parallel, efforts are underway to obtain administrative boundary shapefiles corresponding to the former 11-province configuration of the DRC to support historical analyses of the surveillance network.
+The analysis considered three network configurations: the historical 11-site network, the established 26-site network and the proposed configuration comprising 51 identified sites. Two administrative boundary datasets were used to represent the historical and contemporary provincial structures. The historical network was mapped using the former 11 provincial boundaries, whereas the established and proposed networks were mapped using the current 26 provincial boundaries derived from GRID3 DRC health-zone data.
 
-The accessibility analysis will integrate the spatial datasets listed in @tbl-datasets. Christine Myalla will support the team in the development and implementation of the accessibility and travel-time modelling workflows.
+## Sentinel-site and DPS data
 
-| Dataset | Source | Purpose |
-|--------------------|-------------------------|--------------------------|
-| Sentinel-site network information | Unpublished NMCP programme documents compiled by Victoire Nsabatien | Identification of sites included in the historical 11-site, current 26-site, and proposed 52-site surveillance networks |
-| Provincial Health Division locations | Historical and current Provincial Health Division records compiled and provided by Arsène Bokulu | Definition of origin locations for accessibility analyses |
-| Sentinel-site coordinates | Geocoding workflow developed by Kaiza Ilomo using the Google Maps Geocoding API | Spatial localization and validation of sentinel-site locations |
-| Administrative boundaries | GRID3 DRC Health Zones and Health Areas datasets ([grid3.org](https://grid3.org)) | Delineation of national and subnational health administrative boundaries |
-| Road and transport-network data | GRID3 DRC Roads dataset ([grid3.org](https://grid3.org)) | Characterization of transport connectivity for accessibility analysis |
-| Travel-time / friction surfaces | GRID3 DRC Travel Time Friction Surface v1.0 ([grid3.org](https://grid3.org)) | Estimation of motorized and walking travel times |
-| Health facilities and settlements | GRID3 DRC Health Facilities and Settlement datasets ([grid3.org](https://grid3.org)) | Spatial validation and contextual mapping |
+Data on the historical development and planned expansion of the malaria sentinel surveillance network were compiled from unpublished NMCP programme documents by Victoire Nsabatien. These records were used to identify sites included in the original network, the additional locations introduced in 2014 and the further locations proposed for network expansion.
 
-: Spatial datasets used in the accessibility analysis. {#tbl-datasets}
+Historical and current Provincial Health Division names and administrative assignments were compiled and standardised by Arsène Bokulu. The records were used to identify the DPS offices responsible for the sentinel sites under each network configuration.
 
-# Results (progress to date)
+The 2021 selection dataset contained 25 additional sentinel-site locations, giving an evaluated network of 51 sites when combined with the 26 established sites. One further proposed location in Kasaï-Central was not identified in the available records and was therefore excluded from the accessibility analysis.
 
-The project is currently in the data preparation and accessibility-analysis phase. Sentinel-site coordinates for the 11-site, 26-site, and proposed 52-site networks have been compiled and preliminary distribution maps have been produced. Provincial Health Division locations have been assembled and are undergoing validation. Workflows for distance and travel-time analyses have been developed and are currently being implemented. Accessibility analyses comparing the three network configurations are ongoing.
+The historical 11-site configuration retained the former provincial names, while the established and proposed configurations used the current administrative names. Some sentinel sites consequently appeared under different provincial names across configurations despite referring to the same geographical location.
+
+## Geocoding and spatial data preparation
+
+Geographical coordinates for sentinel sites and DPS offices were compiled using the geocoding workflow developed by Kaiza Ilomo. The workflow used the Google Maps Geocoding API and additional geographical information sources, including GRID3, Nominatim and Photon, to identify candidate locations while constraining searches by expected administrative areas.
+
+Quality-control procedures were applied to identify potential geographical mismatches, ambiguous place names and locations requiring manual verification. The selected coordinates were subsequently reviewed against the administrative assignments and travel-time outputs.
+
+The geographical coordinates of Katana in Sud-Kivu were corrected after an initial geocoding error produced an implausibly prolonged assigned journey. The corrected location was retained in the final modelling dataset. Coordinates represented the available geographical location of each sentinel site or DPS administrative seat, and did not necessarily correspond to independently verified facility entrances.
+
+The geographical boundary datasets included GRID3 DRC health zones v9.0, used to derive contemporary provincial boundaries, and the historical `RDC_11_provinces_1988_2015` shapefile. The final modelling analysis used MAP 2020 friction surfaces, rather than the GRID3 travel-time friction surface initially considered in the progress report.
+
+## Geographic accessibility modelling
+
+The walking and motorised accessibility analyses were implemented in R using the `gdistance`, `raster`, `terra` and `sf` packages, with technical and methodological support from Christine Myalla to ensure a consistent and reproducible workflow.
+
+The MAP 2020 walking-only and motorised friction surfaces represent movement costs across the landscape at an approximate spatial resolution of 1 km [@weiss2020global]. The surfaces were prepared for the DRC and a surrounding 50-km buffer to allow travel calculations near national boundaries.
+
+For each transport mode, the friction surface was converted into a transition graph linking each raster cell to its eight neighbouring cells. Conductance between cells was calculated using the inverse of the mean friction values, with geographical distance corrections applied using `gdistance::geoCorrection(type = "c")` [@vanetten2017gdistance].
+
+The same friction surfaces and model configuration were used for all three sentinel-site networks. Consequently, the analysis compared different network configurations under consistent modelled transport conditions. The estimated differences therefore reflect changes in the locations of DPS offices and sentinel sites, rather than historical changes in the road network between 2003 and 2021.
+
+### DPS-to-assigned-sentinel travel times
+
+Walking and motorised travel times between DPS offices and their assigned sentinel sites were estimated using `gdistance::costDistance()`.
+
+Separate origin–destination travel-time matrices were generated for the historical, established and proposed configurations. Each sentinel site was matched to its supervising DPS office using the validated administrative assignments, and the corresponding travel time was extracted from the matrix.
+
+The analysis included 11 journeys for the historical network, 26 for the established network and 51 for the proposed configuration under each transport mode, producing 176 network-scenario journey records.
+
+Modelled travel times were expressed in hours and represent continuous least-cost travel without additional time for rest, overnight stays, waiting periods or field activities.
+
+Walking times exceeding 24 hours were used to identify prolonged assigned journeys, while motorised times of at least two hours were considered a descriptive indicator of the travel effort associated with repeated supervision. These thresholds were not treated as validated limits on operational feasibility.
+
+### National accessibility to DPS offices and sentinel sites
+
+National geographical accessibility was estimated using `gdistance::accCost()`, which calculates accumulated least-cost travel time from a set of origin locations.
+
+Two separate accessibility analyses were conducted. The first estimated travel time to the nearest DPS office, using 11 historical DPS origins and 26 current DPS origins. The second estimated travel time to the nearest sentinel site, using 11, 26 and 51 locations corresponding to the three network configurations.
+
+The proposed expansion did not introduce additional DPS offices. Consequently, the nearest-DPS accessibility surfaces for the established and proposed networks were based on the same 26 origins, whereas the nearest-sentinel accessibility surfaces differed across all three configurations.
+
+National geographical accessibility was summarised using the proportion of modelled DRC area within specified travel-time thresholds. Walking thresholds were 6, 12, 24, 48 and 72 hours, while motorised thresholds were 1, 3, 6, 12 and 24 hours.
+
+Percentages were calculated using area-weighted raster cells within a common national boundary. These estimates represent geographical accessibility rather than population coverage or the ecological representativeness of surveillance locations.
+
+### Walking-route distances
+
+Modelled walking-route distances were estimated using `gdistance::shortestPath()` applied to the walking transition matrix. The resulting least-cost route geometries were converted into spatial lines, and geodesic distances along these routes were calculated in kilometres.
+
+Repeated journeys between identical geographical coordinates were identified across network configurations to avoid unnecessary recalculation. The 88 walking network-scenario records corresponded to 52 distinct DPS-to-site coordinate pairs.
+
+The resulting distances represent modelled least-cost paths and should not be interpreted as observed walking routes or measured road distances.
+
+## Data analysis and quality assurance
+
+Assigned travel times, straight-line distances and least-cost walking-route distances were summarised by network configuration using medians, interquartile ranges and maximum values.
+
+The original 11 sites were also compared under historical and contemporary DPS assignments to distinguish changes resulting from administrative reassignment from changes associated with additional surveillance locations.
+
+National accessibility was compared between configurations using area-weighted percentages within defined travel-time thresholds. The incremental change in geographical coverage was calculated for each expansion stage, including the average percentage-point gain per additional sentinel site.
+
+Model inputs and outputs were subjected to quality-control procedures, including verification of origin coordinates, completeness of assigned journeys and comparison of travel-time surfaces. Further details of these checks and the computational environment are provided in the Supplementary Material.
+
+# Results
+
+## Evolution of the sentinel-site network
+
+The geographical distribution of sentinel sites expanded from 11 historical locations established during 2003–2005 to 26 established sites following the addition of 15 locations in 2014. The proposed configuration included 25 further sites, bringing the analysed network to 51 locations (@fig-network).
+
+The expansion increased the number of geographically distributed surveillance locations, although the extent to which the selected sites represent different vector habitats and epidemiological settings was not evaluated in this study.
+
+```{r}
+#| label: fig-network
+#| fig-cap: "Geographical distribution of entomological sentinel sites across the historical 11-site network, established 26-site network and proposed 51-site configuration in the DRC."
+#| out-width: "95%"
+
+knitr::include_graphics(
+  "output/unified/Figure1_network_evolution_clean.png"
+)
+```
+
+## Assigned DPS-to-sentinel travel times
+
+The analysis included 88 assigned DPS-to-sentinel journey records for each transport mode (@tbl-assigned; @fig-assigned). Travel times differed considerably between network configurations, reflecting variation in the geographical locations of sites and their assigned DPS offices.
+
+```{r}
+#| label: tbl-assigned
+#| tbl-cap: "Modelled DPS-to-assigned-sentinel travel times and walking-route distances by network configuration. Continuous values are median (interquartile range), except walking-route distances, reported as median (maximum). Counts are n (%)."
+
+configurations <- list(
+  "Historical 11 sites" = net11,
+  "2014 additions (15)" = additions2014,
+  "Established 26 sites" = net26,
+  "2021 additions (25)" = additions2021,
+  "Proposed 51 sites" = net51
+)
+
+assigned_table <- bind_rows(
+  lapply(
+    names(configurations),
+    function(label) {
+
+      x <- configurations[[label]]
+
+      tibble(
+        Configuration = label,
+        Sites = nrow(x),
+        `Within 1 km` = n_pct(
+          x$straight_km <= 1
+        ),
+        `Walking h` = med_iqr(x$walk_h),
+        `Walk >24 h` = n_pct(
+          x$walk_h > 24
+        ),
+        `Motorised h` = med_iqr(x$motor_h),
+        `Motor >=2 h` = n_pct(
+          x$motor_h >= 2
+        ),
+        `Route km, median (max)` = sprintf(
+          "%.1f (%.1f)",
+          median(x$walking_route_km),
+          max(x$walking_route_km)
+        )
+      )
+    }
+  )
+)
+
+knitr::kable(
+  assigned_table,
+  align = "lccccccc"
+)
+```
+
+### Historical network and DPS reassignment
+
+The original 11-site network had a median assigned walking time of `r f1(median(net11$walk_h))` hours, compared with `r f1(median(net11$motor_h))` hours for motorised transport.
+
+Following reassignment of the historical sites to the contemporary DPS network, `r sum(reassignment$different_dps_location)` of the 11 sites were associated with DPS offices at different geographical coordinates. Assigned walking time was shorter for `r sum(reassignment$direction == "Shorter")` sites, unchanged for `r sum(reassignment$direction == "Unchanged")` and longer for `r sum(reassignment$direction == "Longer")`.
+
+The median walking time for the same historical sites under contemporary DPS assignments was `r f1(median(reassignment$new_walk_h))` hours. This comparison distinguishes the effect of administrative reassignment from changes in summary travel times resulting from the addition of new sites (@tbl-reassignment).
+
+### Sites introduced in 2014
+
+The 15 sites introduced in 2014 had a median straight-line distance of `r f1(median(additions2014$straight_km))` km from their assigned DPS offices and a median walking time of `r f1(median(additions2014$walk_h))` hours.
+
+Among these sites, `r sum(additions2014$straight_km <= 1)` were located within 1 km of their assigned DPS coordinates. For the complete 26-site network, `r sum(net26$straight_km <= 1)` sites were located within this distance.
+
+The established 26-site network had a median assigned walking time of `r f1(median(net26$walk_h))` hours and a median motorised time of `r f1(median(net26$motor_h))` hours. The lower median assigned travel time, relative to the historical network, reflects the composition and geographical distribution of the 26-site configuration, including the additional sites situated near DPS locations.
+
+### Sites proposed in 2021
+
+The 25 proposed additional sites were generally more distant from their assigned DPS offices. Their median straight-line distance was `r f1(median(additions2021$straight_km))` km, while median walking and motorised travel times were `r f1(median(additions2021$walk_h))` and `r f1(median(additions2021$motor_h))` hours, respectively.
+
+Among the proposed sites, `r n_pct(additions2021$walk_h > 24)` required more than 24 hours of modelled walking travel, while `r n_pct(additions2021$motor_h >= 2)` required at least two hours of modelled motorised travel.
+
+Including these sites increased the median assigned walking time of the complete 51-site network to `r f1(median(net51$walk_h))` hours and the median motorised time to `r f1(median(net51$motor_h))` hours. The maximum assigned walking and motorised travel times were `r f1(max(net51$walk_h))` and `r f1(max(net51$motor_h))` hours, respectively.
+
+Median walking-route distances also differed across the three complete network configurations, reaching `r f1(median(net11$walking_route_km))`, `r f1(median(net26$walking_route_km))` and `r f1(median(net51$walking_route_km))` km for the historical, established and proposed networks. The maximum modelled walking-route distance in the proposed configuration was `r f1(max(net51$walking_route_km))` km.
+
+```{r}
+#| label: fig-assigned
+#| fig-cap: "Distribution of modelled walking and motorised travel times between DPS offices and their assigned sentinel sites across the three network configurations."
+#| out-width: "95%"
+
+knitr::include_graphics(
+  "output/unified/Figure4_assigned_travel_time_distributions.png"
+)
+```
+
+## National geographic accessibility to sentinel sites
+
+The national accessibility analysis showed that increasing the number of sentinel sites reduced modelled travel time to the nearest surveillance location across substantial areas of the country (@fig-sentinel).
+
+::: {#fig-sentinel layout-ncol="1"}
+
+![Walking-only accessibility across the historical, established and proposed networks.](output/unified/FigureS1_walking_nearest_sentinel_sites.png){width=100%}
+
+![Motorised accessibility across the historical, established and proposed networks.](output/unified/FigureS2_motorized_nearest_sentinel_sites.png){width=100%}
+
+Modelled walking and motorised accessibility to the nearest sentinel site across the 11-, 26- and 51-site network configurations. The upper and lower rows represent walking-only and motorised travel, respectively.
+
+:::
+
+Within 24 hours of modelled walking travel, the proportion of national area accessible to a sentinel site increased from `r f1(coverage_pct(11, "walking", 24))`% in the historical network to `r f1(coverage_pct(26, "walking", 24))`% in the established network and `r f1(coverage_pct(51, "walking", 24))`% in the proposed configuration.
+
+For motorised transport, the proportion of modelled national area within six hours of the nearest sentinel site increased from `r f1(coverage_pct(11, "motorized", 6))`% to `r f1(coverage_pct(26, "motorized", 6))`% and `r f1(coverage_pct(51, "motorized", 6))`% across the three configurations (@tbl-coverage).
+
+```{r}
+#| label: tbl-coverage
+#| tbl-cap: "Area-weighted percentage of the DRC within selected travel-time thresholds of the nearest sentinel site."
+
+coverage_table <- tibble(
+  Configuration = c(
+    "Historical 11 sites",
+    "Established 26 sites",
+    "Proposed 51 sites"
+  ),
+  `Walking <=24 h (%)` = vapply(
+    c(11, 26, 51),
+    coverage_pct,
+    numeric(1),
+    m = "walking",
+    h = 24
+  ),
+  `Motorised <=6 h (%)` = vapply(
+    c(11, 26, 51),
+    coverage_pct,
+    numeric(1),
+    m = "motorized",
+    h = 6
+  )
+)
+
+knitr::kable(
+  coverage_table,
+  digits = 1,
+  align = "lrr"
+)
+```
+
+The geographical coverage gained from the additional sites varied between expansion stages. At the 24-hour walking threshold, the average increase in geographical coverage per additional sentinel site was `r f1(coverage_gain$Walking[1])` percentage points for the 2014 expansion and `r f1(coverage_gain$Walking[2])` percentage points for the proposed 2021 additions.
+
+At the six-hour motorised threshold, the corresponding average increases were `r f1(coverage_gain$Motorized[1])` and `r f1(coverage_gain$Motorized[2])` percentage points per additional site.
+
+These measures represent the incremental percentage-point change associated with each expansion stage divided by the number of sites added. They should not be interpreted as independent site-specific contributions or evidence of optimal network configuration.
+
+The full geographical accessibility results across all evaluated thresholds are presented in @tbl-full-coverage.
+
+## Geographic accessibility to DPS offices
+
+The analysis of geographical accessibility to DPS offices showed differences between the historical configuration of 11 DPS origins and the contemporary configuration of 26 DPS origins.
+
+Increasing the number of DPS offices improved modelled geographical accessibility across parts of the country. However, considerable spatial variation remained, particularly in geographically extensive areas with limited transport connectivity.
+
+The proposed 2021 sentinel-site expansion did not introduce additional DPS offices. Consequently, the nearest-DPS accessibility surfaces were unchanged between the 26-site and 51-site configurations.
+
+The corresponding walking and motorised maps are presented in the Supplementary Material (@fig-dps-walking; @fig-dps-motorized).
+
+# Discussion
+
+## Principal findings
+
+This study examined changes in the geographical distribution and accessibility of malaria entomological sentinel sites across the historical 11-site, established 26-site and proposed 51-site networks in the DRC.
+
+The results demonstrate that expansion of the surveillance network improved geographical accessibility to sentinel sites while also increasing the travel requirements associated with some assigned DPS-to-site journeys.
+
+The established 26-site network had a lower median assigned travel time than the historical network, reflecting the location and composition of the additional sites. In contrast, the proposed 2021 additions were generally more distant from their supervising DPS offices, resulting in longer assigned journeys in the expanded configuration.
+
+At the national level, the proportion of modelled area within selected travel-time thresholds of a sentinel site increased across successive configurations. However, the average geographical coverage gained per additional site declined, particularly under motorised travel at the six-hour threshold.
+
+These findings highlight the distinction between improving geographical access to surveillance locations and maintaining the operational feasibility of repeatedly visiting those locations.
+
+## Geographical accessibility and ecological representativeness
+
+Although the expansion of sentinel sites improved geographical accessibility, this does not necessarily imply that the network became more representative of the environmental and epidemiological conditions across the DRC.
+
+The effectiveness of a surveillance network depends partly on its ability to capture differences in malaria-vector abundance, species composition, behaviour and insecticide resistance across environmentally heterogeneous settings.
+
+Metelo et al. [@metelo2024complexity] highlighted the limitations of selecting sentinel sites primarily according to administrative criteria and emphasised the need to account for ecological variation. Similarly, ecological stratification and model-based sampling approaches have demonstrated the potential to improve the geographical and environmental representation of mosquito surveillance [@sedda2019improved].
+
+Accessibility and environmental characteristics may be associated because transport infrastructure and settlement patterns are unevenly distributed across landscapes. Consequently, sites selected primarily for ease of access could underrepresent remote environmental conditions that may be relevant to malaria-vector distributions.
+
+However, the present study did not quantify relationships between accessibility and environmental covariates or assess the ecological representativeness of the three network configurations. These questions require additional analyses using national environmental datasets and vector-distribution information.
+
+## Operational feasibility and repeated surveillance
+
+The estimated travel times between DPS offices and sentinel sites provide an indication of the geographical effort potentially required for supervision and entomological data collection.
+
+Sentinel surveillance requires repeated observations to monitor changes in vector populations and evaluate the effects of interventions. Locations requiring prolonged travel may therefore demand additional staff time, transport resources and logistical planning to maintain the intended frequency of surveillance activities.
+
+Nevertheless, accessibility alone does not determine whether planned surveys can be completed. Operational feasibility also depends on available personnel, transport, seasonal road conditions, funding, insecurity and laboratory processing capacity.
+
+These considerations are relevant to the DRC, where geographical barriers and insecurity may affect the frequency and continuity of surveillance activities.
+
+The TIMESS framework developed by Sedda et al. [@sedda2024timess] illustrates the importance of considering the number of sampling sites and repeated measurements together, particularly when surveillance data exhibit seasonality and spatial correlation.
+
+Future sentinel-site planning should therefore consider both the location of sites and the frequency at which they can feasibly be visited to meet specific surveillance objectives.
+
+## Implications for sentinel-site selection
+
+The present findings provide an accessibility component that could contribute to a broader evidence-based framework for selecting sentinel sites.
+
+Different surveillance objectives may require different combinations of sampling locations and sampling frequency. Longitudinal monitoring of insecticide resistance may require repeated collections at selected sites, whereas detecting locally distributed or secondary vector species may require wider sampling across environmental gradients.
+
+The selection of sentinel sites should therefore consider not only geographical coverage and travel time but also environmental representativeness, vector ecology, malaria transmission, available resources and operational constraints.
+
+Importantly, the present study does not identify an optimal number or configuration of sentinel sites. Rather, it quantifies geographical differences between existing and proposed configurations and provides information that could be incorporated into future network-design analyses.
+
+## Strengths and limitations
+
+A principal strength of the study is the use of a consistent geographical accessibility modelling framework to compare historical, established and proposed sentinel-site configurations.
+
+The analysis distinguished between assigned DPS-to-site travel time, accessibility to the nearest DPS office and accessibility to the nearest sentinel site. These measures describe different aspects of the geographical distribution and operational accessibility of the surveillance system.
+
+However, several limitations should be considered.
+
+First, the MAP 2020 friction surfaces were applied to all configurations, and the results therefore do not reconstruct historical road conditions or transport infrastructure.
+
+Second, the estimated travel times represent modelled continuous journeys and were not validated against observed field travel. Seasonal road conditions, flooding, river transport, insecurity and other operational delays were not explicitly incorporated.
+
+Third, the geographical coordinates of some sentinel sites and DPS locations represent settlements or administrative seats rather than precise facility locations, and the spatial resolution of the friction surfaces limits interpretation of short journeys.
+
+Fourth, national accessibility estimates were area-weighted and did not incorporate population distribution, malaria transmission or ecological representativeness.
+
+Fifth, surveillance costs, sampling frequency and the probability of completing scheduled field visits were not evaluated.
+
+Finally, the proposed configuration included 51 identified sites, rather than the complete 52-site network described in programme planning documentation.
+
+## Future research
+
+Future work should integrate geographical accessibility with environmental and epidemiological information to support more comprehensive evaluation of the DRC sentinel-site network.
+
+A first priority would be to assess the relationship between travel time and environmental covariates, including rainfall, temperature, land cover and elevation, to determine whether accessible areas differ systematically from less accessible environments.
+
+A second priority would be to evaluate the environmental representativeness of existing sentinel sites and determine whether important malaria-vector habitats or epidemiological settings remain underrepresented.
+
+Species distribution models could also be used to identify potential surveillance gaps, particularly where existing observations are sparse or spatially biased.
+
+Operational planning could be strengthened by incorporating seasonal accessibility, transport availability, surveillance costs, staffing and the frequency of sampling required for different surveillance objectives.
+
+Together, these analyses could support the development of a multi-criteria framework for selecting sentinel sites that balances geographical accessibility, ecological representativeness and operational feasibility.
+
+# Conclusion
+
+The expansion of malaria entomological sentinel sites in the DRC improved geographical accessibility to surveillance locations, but the proposed additional sites also increased the modelled travel requirements associated with supervision from Provincial Health Division offices.
+
+The findings demonstrate that increasing the number of sentinel sites does not necessarily improve all aspects of surveillance-network performance. While expansion can extend geographical coverage, it may also introduce additional operational constraints for repeated entomological data collection.
+
+Geographical accessibility modelling provides quantitative evidence to support surveillance planning, but it cannot independently determine whether the network adequately represents malaria-vector distributions or national epidemiological heterogeneity.
+
+Future sentinel-site selection should therefore integrate accessibility with environmental representativeness, surveillance objectives, sampling frequency and available operational resources.
+
+# Workload distribution {.unnumbered}
+
+**Victoire Nsabatien** proposed the research question, compiled information on the historical and proposed expansion of the DRC sentinel-site network from NMCP documents.
+
+**Arsène Bokulu** compiled and standardised historical and current DPS administrative information, contributed to sentinel-site assignments, and supported verification of surveillance-network inputs.
+
+**Kaiza Ilomo** developed the geocoding and data-preparation workflow, contributed to the reproducible analytical environment, and supported project documentation and report preparation.
+
+**Christine Myalla** provided technical and methodological support for the development, implementation and reproducibility of the walking and motorised geographical accessibility-modelling workflow, including least-cost travel-time and route analyses.
+
+The study team contributed to the interpretation and reporting of findings.
+
+# Use of AI tools {.unnumbered}
+
+Generative AI tools were used to support programming, analytical troubleshooting and language editing. The study team reviewed the analytical procedures, verified the reported outputs and retains responsibility for the scientific interpretation and final report.
+
+# Supplementary material {.unnumbered}
+
+## Supplementary Figure S1: Labelled sentinel-site network
+
+```{r}
+#| label: fig-network-labelled
+#| fig-cap: "Labelled geographical locations of historical, established and proposed sentinel sites in the DRC."
+#| out-width: "95%"
+
+knitr::include_graphics(
+  "output/unified/Figure1_network_evolution_labeled.png"
+)
+```
+
+## Supplementary Table S1: Historical DPS reassignment
+
+```{r}
+#| label: tbl-reassignment
+#| tbl-cap: "Comparison of walking travel times for historical sentinel sites under original and contemporary DPS assignments."
+
+reassignment_table <- reassignment |>
+  transmute(
+    Site = sentinel_site,
+    `Historical DPS` = historical_dps,
+    `Current DPS` = current_dps,
+    `Historical h` = round(old_walk_h, 1),
+    `Current h` = round(new_walk_h, 1),
+    `Difference h` = round(walk_difference_h, 1),
+    Direction = direction
+  )
+
+knitr::kable(
+  reassignment_table,
+  align = "lllrrrl"
+)
+```
+
+## Supplementary Figures S2–S3: DPS accessibility
+
+```{r}
+#| label: fig-dps-walking
+#| fig-cap: "Walking accessibility to the nearest DPS office across historical and contemporary network configurations."
+#| out-width: "95%"
+
+knitr::include_graphics(
+  "output/unified/Figure2_walking_accessibility_final.png"
+)
+```
+
+```{r}
+#| label: fig-dps-motorized
+#| fig-cap: "Motorised accessibility to the nearest DPS office across historical and contemporary network configurations."
+#| out-width: "95%"
+
+knitr::include_graphics(
+  "output/unified/Figure3_motorized_accessibility_final.png"
+)
+```
+
+## Supplementary Table S2: Full national sentinel accessibility
+
+```{r}
+#| label: tbl-full-coverage
+#| tbl-cap: "Area-weighted percentage of modelled DRC area within each evaluated travel-time threshold of the nearest sentinel site."
+
+full_coverage <- coverage |>
+  mutate(
+    Mode = if_else(
+      mode == "walking",
+      "Walking",
+      "Motorised"
+    ),
+    `Threshold (h)` = threshold_hours,
+    `Accessible area (%)` = round(
+      percent_modelled_area,
+      1
+    )
+  ) |>
+  select(
+    Mode,
+    network,
+    `Threshold (h)`,
+    `Accessible area (%)`
+  ) |>
+  arrange(
+    Mode,
+    `Threshold (h)`,
+    network
+  )
+
+knitr::kable(
+  full_coverage,
+  align = "lcrc"
+)
+```
+
+## Supplementary Table S3: Site-level DPS-to-sentinel journeys
+
+```{r}
+#| label: tbl-site-level
+#| tbl-cap: "Distinct DPS-to-sentinel geographical journeys, including modelled walking and motorised travel times and walking-route distances."
+
+site_table <- unique_pairs |>
+  transmute(
+    Network = network,
+    Province = province,
+    `DPS office` = dps_office,
+    `Sentinel site` = sentinel_site,
+    `Straight km` = round(straight_km, 1),
+    `Walking h` = round(walk_h, 1),
+    `Motorised h` = round(motor_h, 1),
+    `Route km` = round(walking_route_km, 1)
+  ) |>
+  arrange(
+    Province,
+    `Sentinel site`
+  )
+
+knitr::kable(
+  site_table,
+  align = "llllrrrr"
+)
+```
+
+## Reproducibility and quality control
+
+The accessibility analysis generated ten validated travel-time surfaces, including four nearest-DPS surfaces and six nearest-sentinel surfaces across walking and motorised transport. All source locations returned zero travel time at their corresponding raster origins, and no missing origin values were identified.
+
+The assigned travel-time analysis generated 176 network-scenario journey records, comprising 88 walking and 88 motorised journeys. All walking journey records were matched to saved walking-route distances.
+
+Comparison of the previously saved and current walking-time results showed a maximum difference of approximately 2.9 minutes, consistent with the precision of earlier saved travel-time estimates.
+
+The final analytical workflow consisted of seven numbered R scripts, from `00_packages.R` to `06_run_analysis.R`. The model configuration and software environment were documented in `output/unified/accessibility_model_configuration.csv` and `output/unified/R_session_information.txt`, respectively.
+
+# Data and code availability {.unnumbered}
+
+The analytical scripts, derived results and model configuration are maintained in the project repository. Public sharing of original NMCP records, geocoded coordinates and derived geographical products remains subject to data provenance, institutional approval and applicable licence conditions.
 
 # References {.unnumbered}
 
 ::: {#refs}
-Adam, J., Mukuku, O., Tawi, J.M., Luoga, P. and Mutombo, A.M. (2026). Prevalence and factors associated with malaria among children aged 6–59 months in the Democratic Republic of the Congo: a nationwide cross-sectional survey. *Malaria Journal*, 25(1), 117. <https://doi.org/10.1186/s12936-026-05822-2>
-
-GRID3 (2026). *Geospatial data: Democratic Republic of the Congo.* Geo-Referenced Infrastructure and Demographic Data for Development (GRID3). Use the specific dataset name and version in the Methods section (e.g., DRC Roads, Health Zones, Health Facilities, or Travel Time Friction Surface).
-
-Kouassi, B.L., Edi, C., Ouattara, A.F. et al. (2023). Entomological monitoring data driving decision-making for appropriate and sustainable malaria vector control in Côte d'Ivoire. *Malaria Journal*, 22(1), 14. <https://doi.org/10.1186/s12936-023-04439-z>
-
-Longbottom, J., Krause, A., Torr, S.J. and Stanton, M.C. (2020). Quantifying geographic accessibility to improve efficiency of entomological monitoring. *PLoS Neglected Tropical Diseases*, 14(3), e0008096. <https://doi.org/10.1371/journal.pntd.0008096>
-
-Sedda, L., Lucas, E.R., Djogbénou, L.S., Edi, A.V.C., Egyir-Yawson, A., Kabula, B.I., Midega, J., Ochomo, E., Weetman, D. and Donnelly, M.J. (2019). Improved spatial ecological sampling using open data and standardization: an example from malaria mosquito surveillance. *Journal of the Royal Society Interface*, 16(153), 20180941. <https://doi.org/10.1098/rsif.2018.0941>
-
-Sedda, L., Jalilian, A., Opiyo, M., Gowelo, S., Marrenjo, D.J., Atta-Obeng, C., Boampong, E., Oppong, S.K., Owusu-Akrofi, O., Thomsen, E., Tatarsky, A., Malm, K.L., Candrinho, B. and Lobo, N.F. (2026). Evaluation of the Entomological Adaptive Surveillance Framework for malaria vector monitoring: a comparative field trial with routine surveillance in Ghana and Mozambique. *BMJ Public Health*, 4(1), e004060. <https://doi.org/10.1136/bmjph-2025-004060>
-
-Sugg, K.N., Mpata, F.W., Humes, M.D., Aliango Marachto, D., Rajan, R. and Winch, P.J. (2026). Positive tests are all alike, every negative test is negative in its own way: lack of confidence in negative malaria rapid diagnostic tests in the Democratic Republic of the Congo. *Malaria Journal*, 25(1), 133. <https://doi.org/10.1186/s12936-026-05802-6>
 :::

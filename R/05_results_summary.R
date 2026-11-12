@@ -297,6 +297,71 @@ readr::write_csv(
   file.path(out_dir, "Table_spatial_accessibility_summary.csv")
 )
 
+
+# 5B. National geographical accessibility to DPS offices
+
+dps_summary <- dplyr::bind_rows(
+  lapply(c("walking", "motorized"), function(mode) {
+
+    h <- if (mode == "walking") 24 else 6
+
+    dplyr::bind_rows(
+      lapply(c(11, 26), function(network) {
+
+        file <- file.path(
+          out_dir,
+          paste0("accessibility_", mode, "_", network, ".tif")
+        )
+
+        stopifnot(file.exists(file))
+
+        r <- terra::crop(
+          terra::rast(file),
+          country_vect,
+          mask = TRUE
+        )
+
+        area <- terra::cellSize(r, unit = "km", mask = TRUE)
+
+        total <- terra::global(
+          area, "sum", na.rm = TRUE
+        )[1, 1]
+
+        covered <- terra::global(
+          terra::ifel(r <= h, area, 0),
+          "sum", na.rm = TRUE
+        )[1, 1]
+
+        tibble::tibble(
+          mode = mode,
+          network = network,
+          threshold_hours = h,
+          modelled_area_km2 = total,
+          accessible_area_km2 = covered,
+          coverage_percent = round(100 * covered / total, 2)
+        )
+      })
+    )
+  })
+)
+
+stopifnot(
+  nrow(dps_summary) == 4,
+  all(abs(dps_summary$modelled_area_km2 - 2316655) < 100),
+  all(abs(
+    dps_summary$coverage_percent -
+    c(9.62, 23.80, 30.42, 54.06)
+  ) < 0.02)
+)
+
+readr::write_csv(
+  dps_summary,
+  file.path(
+    out_dir,
+    "Table_dps_spatial_accessibility_summary.csv"
+  )
+)
+
 # 6. Check improvement in nearest-site accessibility
 
 spatial_wide <- spatial_summary |>

@@ -220,7 +220,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workbook", type=Path,
-                    default=here / "DRC_Health_Zones_Sentinel_Sites.xlsx")
+                    default=here / "data" / "input" / "DRC_Health_Zones_Sentinel_Sites.xlsx")
     ap.add_argument("--out", type=Path,
                     help="default: the geocoding pipeline's input CSV; with "
                          "--audit, drc_sentinel_sites_26_audit.csv beside this script")
