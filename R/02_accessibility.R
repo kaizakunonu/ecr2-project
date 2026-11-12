@@ -1022,6 +1022,25 @@ make_accessibility_map <- function(mode, destination) {
 
   save_figure(p, output_file)
 
+  # POSTER_300DPI: sentinel accessibility
+  if (destination == "sentinel") {
+    poster_name <- if (mode == "walking") {
+      "Figure2_walking_accessibility_300dpi.png"
+    } else {
+      "Figure3_motorized_accessibility_300dpi.png"
+    }
+
+    ggplot2::ggsave(
+      file.path("output/poster", poster_name),
+      plot = p,
+      width = 15,
+      height = 6.25,
+      units = "in",
+      dpi = 300,
+      bg = "white"
+    )
+  }
+
   rm(p, raster_data)
   invisible(gc(verbose = FALSE))
 
