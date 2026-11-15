@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex when working with code in this repository.
+This file provides guidance to coding agents (Codex, and Claude Code through `CLAUDE.md`) when working with code in this repository.
 
 ## What this repository is
 
