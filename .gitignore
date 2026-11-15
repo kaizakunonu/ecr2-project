@@ -1,6 +1,6 @@
 # ============================================================
 # ecr2-project — single ignore file for the whole repository
-# (Files already tracked, e.g. proposal.html/pdf and the
+# (Files already tracked, e.g. the rendered PDFs and the
 #  geocoding input CSVs, stay tracked regardless of these rules.
 #  Use `git add -f <file>` to deliberately commit an ignored file.)
 # ============================================================
