@@ -153,7 +153,7 @@ Test fixtures are live responses: Google's copied in as parsed rows, the open pr
 ## Conventions
 
 - Provinces use the 26-province (post-2015) vocabulary. `validate_provinces` rejects pre-2015 names such as Bandundu or Katanga. Names are compared through `normalise_name()`, which ignores accents, so "Kasai" and "Kasaï" match.
-- `.gitignore` excludes `*.html`, `*.pdf`, `*.csv`, `*.xlsx`, Office files and geospatial data. Exceptions are `geocoding/input/*.csv` and `geocoding/reference/*.csv`. `proposal.pdf` and `ecr_final_report.pdf` are already tracked. Commit any other rendered deliverable deliberately with `git add -f`.
+- `.gitignore` excludes `*.html`, `*.pdf`, `*.csv`, `*.xlsx`, Office files and geospatial data. Exceptions are `geocoding/input/*.csv` and `geocoding/reference/*.csv`. `proposal.pdf`, `ecr_final_report.pdf` and `ecr_poster.pdf` are already tracked. Commit any other rendered deliverable deliberately with `git add -f`.
 - `GOOGLE_MAPS_API_KEY`, `GEONAMES_USERNAME` and the optional `NOMINATIM_EMAIL` are read from the environment, only when an uncached request needs them, and never printed or written. `.Renviron` and `.env` are git-ignored, but see the activation caveat above.
 - R style is 2-space indent with the native pipe `|>`, as set in `ecr2-project.Rproj` and used throughout.
 - `references.bib` is used only by `proposal.qmd`. The progress report writes its citations as plain text.
