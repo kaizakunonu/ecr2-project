@@ -136,13 +136,22 @@ run_analysis <- function(full_rebuild = FALSE) {
     "R_session_information.txt"
   )
 
-  paths <- file.path(
-    out_dir,
-    outputs
+  # 300-dpi copies for the poster (ecr_poster.qmd)
+
+  poster_outputs <- c(
+    "Figure1_network_evolution_300dpi.png",
+    "Figure4_assigned_travel_time_distributions_300dpi.png",
+    "FigureS1_walking_nearest_sentinel_sites_300dpi.png",
+    "FigureS2_motorized_nearest_sentinel_sites_300dpi.png"
+  )
+
+  paths <- c(
+    file.path(out_dir, outputs),
+    file.path("output/poster", poster_outputs)
   )
 
   status <- data.frame(
-    output = outputs,
+    output = paths,
     exists = file.exists(paths),
     size_mb = round(
       file.info(paths)$size / 1024^2,

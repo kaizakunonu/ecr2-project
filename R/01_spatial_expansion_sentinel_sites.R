@@ -6,6 +6,9 @@ source("R/00_packages.R")
 out_dir <- "output/unified"
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
+poster_dir <- "output/poster"
+dir.create(poster_dir, recursive = TRUE, showWarnings = FALSE)
+
 # 1. Load sentinel-site data
 
 ss11 <- read.csv("output/ss_11.csv")
@@ -314,16 +317,16 @@ ggsave(
   bg = "white"
 )
 
-  # POSTER_300DPI: network evolution
-  ggplot2::ggsave(
-    "output/poster/Figure1_network_evolution_300dpi.png",
-    plot = p_clean,
-    width = 14,
-    height = 14 * 7.5 / 18,
-    units = "in",
-    dpi = 300,
-    bg = "white"
-  )
+# POSTER_300DPI: network evolution
+ggplot2::ggsave(
+  file.path(poster_dir, "Figure1_network_evolution_300dpi.png"),
+  plot = p_clean,
+  width = 14,
+  height = 14 * 7.5 / 18,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
 
 rm(p_clean)
 invisible(gc(verbose = FALSE))

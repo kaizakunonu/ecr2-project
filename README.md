@@ -23,7 +23,9 @@ to compare walking and motorised accessibility.
 - geocoding/: geocoding workflow
 - output/: input caches and model outputs
 - output/unified/: final figures and tables
-- poster/: poster template, figures and logos
+- output/poster/: 300-dpi figures for the poster
+- ecr_poster.qmd: the poster; render it after the analysis
+- poster/: poster Typst template and logos
 - docs/: scientific notes and documentation
 - archive/: legacy materials
 

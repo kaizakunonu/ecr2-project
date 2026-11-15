@@ -6,6 +6,9 @@ source("R/00_packages.R")
 out_dir <- "output/unified"
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
+poster_dir <- "output/poster"
+dir.create(poster_dir, recursive = TRUE, showWarnings = FALSE)
+
 # 1. Assigned DPS-to-site travel times
 
 journeys <- readr::read_csv(
@@ -467,6 +470,19 @@ ggsave(
   width = 10,
   height = 8,
   dpi = 180,
+  bg = "white"
+)
+
+# POSTER_300DPI: assigned travel times
+ggsave(
+  file.path(
+    poster_dir,
+    "Figure4_assigned_travel_time_distributions_300dpi.png"
+  ),
+  p_journeys,
+  width = 10,
+  height = 8,
+  dpi = 300,
   bg = "white"
 )
 

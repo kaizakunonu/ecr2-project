@@ -12,6 +12,9 @@ make_figures <- TRUE
 out_dir <- "output/unified"
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
+poster_dir <- "output/poster"
+dir.create(poster_dir, recursive = TRUE, showWarnings = FALSE)
+
 buffer_km <- 50
 directions <- 8
 
@@ -1022,16 +1025,16 @@ make_accessibility_map <- function(mode, destination) {
 
   save_figure(p, output_file)
 
-  # POSTER_300DPI: sentinel accessibility
+  # POSTER_300DPI: 300-dpi copies of Figures S1 and S2 (nearest sentinel site)
   if (destination == "sentinel") {
     poster_name <- if (mode == "walking") {
-      "Figure2_walking_accessibility_300dpi.png"
+      "FigureS1_walking_nearest_sentinel_sites_300dpi.png"
     } else {
-      "Figure3_motorized_accessibility_300dpi.png"
+      "FigureS2_motorized_nearest_sentinel_sites_300dpi.png"
     }
 
     ggplot2::ggsave(
-      file.path("output/poster", poster_name),
+      file.path(poster_dir, poster_name),
       plot = p,
       width = 15,
       height = 6.25,

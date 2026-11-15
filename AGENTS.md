@@ -63,6 +63,7 @@ Rscript build_walking_inputs.R --chain open_first --out output_open_first
 # run_analysis(full_rebuild = TRUE) to recompute it.
 Rscript 06_run_analysis.R
 quarto render ecr_final_report.qmd   # reads output/unified/
+quarto render ecr_poster.qmd         # reads output/unified/ and output/poster/; Typst, one A0 page
 ```
 
 The test suite has no per-test selection. It is a single script of `ok()` assertions grouped by `section()`.
@@ -89,7 +90,7 @@ The accessibility analysis (`R/00`–`R/05`, run in order by `06_run_analysis.R`
 - `dps_province` uses each boundary layer's spelling, because the original walking-time Rmds `setdiff()` against it: the 11-province shapefile for 2003_2005, GRID3 v9.0 health zones otherwise (`Mai-Ndombe`, no ï).
 - The script also creates those layers when missing: it unzips `RDC_11_provinces_1988_2015/` from `utilities/` and downloads `GRID3_COD_health_zones/` from GRID3's ArcGIS service.
 - `R/02_accessibility.R` downloads the MAP friction surfaces with `malariaAtlas` when missing and caches them, with their transition layers, in `output/`; `R/03` and `R/04` reuse them.
-- Results go to `output/unified/`, which `ecr_final_report.qmd` and `ecr_progress report.qmd` read.
+- Results go to `output/unified/`, and 300-dpi copies of the poster's figures to `output/poster/` (from `R/01`, `R/02` and `R/05`). `ecr_final_report.qmd`, `ecr_progress report.qmd` and `ecr_poster.qmd` read them and compute their numbers from the tables, so re-render them after a pipeline run.
 - The walking and motorised Rmds and numbered scripts that preceded `R/` are kept in `archive/legacy_scripts/` for reference. Nothing runs them.
 
 ## Geocoding pipeline architecture (`geocoding/pipeline/`)
