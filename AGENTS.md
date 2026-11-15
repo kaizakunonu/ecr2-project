@@ -4,7 +4,7 @@ This file provides guidance to coding agents (Codex, and Claude Code through `CL
 
 ## What this repository is
 
-A research project (MAP Early Career Researcher study, MoDD Africa / Ifakara Health Institute) on the geographic accessibility of the DRC's malaria entomological sentinel surveillance sites. Most of it is Quarto writing. The only real code is the sentinel-site geocoding pipeline in `geocoding/`, plus a Python script that builds its input.
+A research project (MAP Early Career Researcher study, MoDD Africa / Ifakara Health Institute) on the geographic accessibility of the DRC's malaria entomological sentinel surveillance sites. Most of it is Quarto writing. The code is the sentinel-site geocoding pipeline in `geocoding/` (plus a Python script that builds its input) and the accessibility analysis in `R/`, run by `06_run_analysis.R`.
 
 The documents disagree on scope, so check which one a task is about:
 - `proposal.qmd` is **provincial**: Kasaï-Central, its 26 health zones, anchored on entomological data.
@@ -54,12 +54,15 @@ quarto render "ecr_progress report.qmd"
 python3 extract_sentinel_sites_26.py            # writes geocoding/input/drc_sentinel_sites_26.csv
 python3 extract_sentinel_sites_26.py --audit    # adds provenance columns; writes ./drc_sentinel_sites_26_audit.csv
 
-# Walking-time inputs (reads the DPS-site pairs, so render those first)
+# Accessibility inputs (reads the DPS-site pairs, so render those first)
 Rscript build_walking_inputs.R                                            # google_first, into output/
 Rscript build_walking_inputs.R --chain open_first --out output_open_first
 
-# Walking-time reports: R code, so run it through Rscript, not straight in bash
-Rscript -e 'rmarkdown::render("DRC_walking_travel_time_26.Rmd")'   # also _historical_11, _51
+# Accessibility analysis: runs R/00-R/05 in order, writes output/unified/.
+# Reuses output/unified/Table_assigned_travel_times.csv when present; call
+# run_analysis(full_rebuild = TRUE) to recompute it.
+Rscript 06_run_analysis.R
+quarto render ecr_final_report.qmd   # reads output/unified/
 ```
 
 The test suite has no per-test selection. It is a single script of `ok()` assertions grouped by `section()`.
@@ -74,18 +77,20 @@ Its output is deterministic: rows are sorted by accent-folded province, then sit
 
 The sentinel workflow reads every file in `paths$input` through `read_sites()`, as one registry of 51 sites. The second file is `geocoding/input/drc_sentinel_sites_2021_expansion.csv`: the 25 sites selected in 2021, taken from the `2021_expansion` sheet of `data/input/DRC_DPS.xlsx` in sheet order. Kasaï-Central has no 2021 site yet. Never append to `drc_sentinel_sites_26.csv`, which the extractor owns; a new network gets its own input file.
 
-A second flow pairs each site with its DPS (Division Provinciale de la Santé) headquarters. It uses `geocoding/input/drc_dps.csv` (DPS seats: dps, province, chef-lieu) and `geocoding/input/drc_dps_site_pairs.csv` (`network, province, dps, sentinel_site`). It reads the sentinel output, and `drc-dps-site-pairs.qmd` writes `geocoding/output/drc_dps_site_pairs_{chain}.csv`, one per coordinate set. The pairs were checked against the `2003_2005`, `2014` and `2021_expansion` sheets of `data/input/DRC_DPS.xlsx`, which is untracked. The three networks are kept separate, because downstream analysts compare accessibility across them. Each holds exactly what its sheet lists, so the full 2021 configuration is `2014` plus `2021_expansion`.
+A second flow pairs each site with its DPS (Division Provinciale de la Santé) headquarters. It uses `geocoding/input/drc_dps.csv` (DPS seats: dps, province, chef-lieu) and `geocoding/input/drc_dps_site_pairs.csv` (`network, province, dps, sentinel_site`). It reads the sentinel output, and `drc-dps-site-pairs.qmd` writes `geocoding/output/drc_dps_site_pairs_{chain}.csv`, one per coordinate set. The pairs were checked against the `2003_2005`, `2014` and `2021_expansion` sheets of `data/input/DRC_DPS.xlsx`. The three networks are kept separate, because downstream analysts compare accessibility across them. Each holds exactly what its sheet lists, so the full 2021 configuration is `2014` plus `2021_expansion`.
 
 The 2003–2005 pairs keep their pre-2015 province and DPS names. `provinces_pre2015` in `config.R` records the July 2015 split, which matches `DPS_2015` in `utilities/RDC_11_provinces_1988_2015_shapefile.zip`. `build_pairs` stops if a pair's DPS seat or site lies outside what its province became. Network names must start with the year the network began. `build_pairs` sorts by network name, which gives chronological output (2003_2005 first), and keeps the workbook's row order within each network.
 - Five pre-2015 DPS whose provinces no longer exist have their own registry rows.
 - The other six share the row of the same-named current DPS. The seat is the same, and `normalise_name` folds "Kasaï Oriental" to "Kasaï-Oriental".
 
-The walking-time reports (`DRC_walking_travel_time_{historical_11,26,51}.Rmd`, at the repo root) read the pairs through `build_walking_inputs.R`, which writes `output/` (git-ignored, separate from `geocoding/output/`):
+The accessibility analysis (`R/00`–`R/05`, run in order by `06_run_analysis.R`) reads the pairs through `build_walking_inputs.R`, which writes `output/` (git-ignored, separate from `geocoding/output/`):
 - `dps_11.csv` + `ss_11.csv` and `dps_26.csv` + `ss_26.csv` are paired by row order.
 - `network_51/ss_51.csv` (2014 + 2021_expansion) is paired with `dps_26.csv` by `dps_province`.
-- `dps_province` uses each boundary layer's spelling, because the Rmds `setdiff()` against it: the 11-province shapefile for 2003_2005, GRID3 v9.0 health zones otherwise (`Mai-Ndombe`, no ï).
+- `dps_province` uses each boundary layer's spelling, because the original walking-time Rmds `setdiff()` against it: the 11-province shapefile for 2003_2005, GRID3 v9.0 health zones otherwise (`Mai-Ndombe`, no ï).
 - The script also creates those layers when missing: it unzips `RDC_11_provinces_1988_2015/` from `utilities/` and downloads `GRID3_COD_health_zones/` from GRID3's ArcGIS service.
-- The friction raster and transition layer are cached in `output/` by the first render and reused by the others.
+- `R/02_accessibility.R` downloads the MAP friction surfaces with `malariaAtlas` when missing and caches them, with their transition layers, in `output/`; `R/03` and `R/04` reuse them.
+- Results go to `output/unified/`, which `ecr_final_report.qmd` and `ecr_progress report.qmd` read.
+- The walking and motorised Rmds and numbered scripts that preceded `R/` are kept in `archive/legacy_scripts/` for reference. Nothing runs them.
 
 ## Geocoding pipeline architecture (`geocoding/pipeline/`)
 

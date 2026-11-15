@@ -17,11 +17,13 @@ to compare walking and motorised accessibility.
 
 - R/: active analysis scripts
 - 06_run_analysis.R: main analysis runner
+- build_walking_inputs.R: builds the analysis inputs in output/
+  from the geocoding pipeline's DPS-site pairs
 - data/: research input datasets
 - geocoding/: geocoding workflow
 - output/: input caches and model outputs
 - output/unified/: final figures and tables
-- reports/: reports and presentations
+- poster/: poster template, figures and logos
 - docs/: scientific notes and documentation
 - archive/: legacy materials
 

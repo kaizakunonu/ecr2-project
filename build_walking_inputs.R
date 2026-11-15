@@ -1,6 +1,8 @@
 #!/usr/bin/env Rscript
-# Build the inputs of the walking-time reports (DRC_walking_travel_time_*.Rmd)
-# from the geocoding pipeline's DPS-site pairs.
+# Build the inputs of the accessibility analysis (R/01-R/05, run by
+# 06_run_analysis.R) from the geocoding pipeline's DPS-site pairs. These files
+# were first written for the walking-time Rmds, now in archive/legacy_scripts/,
+# so "the Rmds" below are those reports; the R/ scripts read the same files.
 #
 #   Rscript build_walking_inputs.R                    # google_first, into output/
 #   Rscript build_walking_inputs.R --chain open_first --out output_open_first
@@ -21,7 +23,7 @@
 # Rmds check it against the layer's names with setdiff().
 #
 # google_first coordinates may not be published or shown on a non-Google map;
-# open_first ones may (see CLAUDE.md).
+# open_first ones may (see AGENTS.md).
 
 suppressMessages({
   library(sf)

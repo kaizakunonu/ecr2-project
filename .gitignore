@@ -17,9 +17,6 @@
 .RData
 .Ruserdata
 .positai
-renv/library/
-renv/local/
-renv/staging/
 
 # ---- Quarto ------------------------------------------------
 # The two lines below are kept verbatim so Quarto doesn't append them again
