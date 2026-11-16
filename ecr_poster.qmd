@@ -37,12 +37,10 @@ poster:
     More sentinel sites can reduce coverage gaps without ensuring operational
     accessibility: future planning should balance coverage with a network that
     can be supported and operated consistently.
-  footer:
-    - label: DRC Malaria Control Programme
-      logos:
+  footer:                 # logo groups; a group may also take a `label:`
+    - logos:
         - poster/logos/pnlp.png
-    - label: Universities and research institutes
-      logos:
+        - poster/logos/inrb.png
         - poster/logos/unikin-ksph.png
         - poster/logos/ihi.png
         - poster/logos/thekids.png

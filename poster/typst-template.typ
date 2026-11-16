@@ -107,7 +107,7 @@
   let pt = 1pt * s
   let ncols = if cols == auto { if pw > ph { 4 } else { 2 } } else { cols }
 
-  // ---- footer: labelled logo groups and a contact line ---------------------
+  // ---- footer: logo groups (label optional) and a contact line -------------
   let has-footer = footer.len() > 0 or contact != none
   let foot-height = if has-footer { 50 * mm } else { 0mm }
   let foot = if has-footer {
@@ -119,8 +119,10 @@
       column-gutter: 20 * mm,
       align: top,
       ..footer.map(group => {
-        text(fill: poster-accent, group.label)
-        v(4 * mm, weak: true)
+        if group.label != none {
+          text(fill: poster-accent, group.label)
+          v(4 * mm, weak: true)
+        }
         grid(
           columns: group.logos.len(),
           column-gutter: 10 * mm,
