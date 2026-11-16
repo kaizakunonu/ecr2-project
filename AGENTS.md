@@ -157,3 +157,4 @@ Test fixtures are live responses: Google's copied in as parsed rows, the open pr
 - `GOOGLE_MAPS_API_KEY`, `GEONAMES_USERNAME` and the optional `NOMINATIM_EMAIL` are read from the environment, only when an uncached request needs them, and never printed or written. `.Renviron` and `.env` are git-ignored, but see the activation caveat above.
 - R style is 2-space indent with the native pipe `|>`, as set in `ecr2-project.Rproj` and used throughout.
 - `references.bib` is used only by `proposal.qmd`. The progress report writes its citations as plain text.
+- `ecr_final_report.bib` is shared by `ecr_final_report.qmd` (Chicago author-date) and `ecr_poster.qmd` (numbered, `poster/vancouver.csl`, via `citeproc: true`). Pandoc sentence-cases BibTeX titles before applying a sentence-case style like Vancouver, so brace-protect proper nouns in titles: `{Democratic Republic of the Congo}`.

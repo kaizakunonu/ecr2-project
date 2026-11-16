@@ -160,6 +160,9 @@
   set figure(gap: 0.55em)
   show figure: set block(breakable: false)
   show figure.caption: it => align(left, text(size: 0.74em, it))
+  // Reference list: the qmd's ::: {#refs} div, filled by Pandoc's citeproc.
+  show <refs>: set text(size: 0.62em)
+  show <refs>: set par(leading: 0.4em, spacing: 0.45em)
 
   // ---- header: gold title block, logo on the right -------------------------
   let title-block = block(

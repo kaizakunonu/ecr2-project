@@ -18,6 +18,8 @@ affiliations:
   - id: kids
     name: The Kids Research Institute Australia, Perth Children’s Hospital, Nedlands, WA, Australia
 lang: en-GB
+bibliography: ecr_final_report.bib   # shared with ecr_final_report.qmd
+csl: poster/vancouver.csl           # NLM/Vancouver, numbered
 mainfont: Liberation Sans   # use Arial on Windows or macOS
 
 poster:
@@ -56,6 +58,7 @@ execute:
 
 format:
   typst:
+    citeproc: true   # Pandoc's citeproc, as in the final report
     template-partials:
       - poster/typst-template.typ
       - poster/typst-show.typ
@@ -72,8 +75,14 @@ in output/poster/ (written by R/01, R/02 and R/05).
 Layout lives in poster/typst-template.typ. Size, orientation and columns are
 set in the `poster:` block above; all type and spacing scale with the paper.
 
+Citations use the final report's ecr_final_report.bib, through Pandoc's
+citeproc (as the report does) with the numbered NLM/Vancouver style in
+poster/vancouver.csl. Typst's own bibliography is avoided: Quarto 1.9 escapes
+the underscores in the .bib path, and it prints `and others` as "others".
+
 The poster is one page. If the PDF has two, the content overflowed: shorten
-the text or narrow a figure.
+the text or narrow a figure (the two maps in the right column are already at
+74% to make room for the references).
 -->
 
 ```{r}
@@ -155,9 +164,9 @@ key_stats <- function(title, values) {
 
 # Background
 
-- The DRC accounted for 12.5% of global malaria cases and 11.1% of malaria deaths in 2024. Prevalence ranges from 5.1% in Kinshasa to 61.0% in Bas-Uele.
-- Vector populations (*An. gambiae* s.l., *An. funestus* and other *Anopheles* spp.) vary markedly in distribution and insecticide resistance.
-- The national malaria programme (PNLP) expanded its entomological sentinel network from 11 sites (2003–05) to 26 (2014), with 52 planned in 2021.
+- The DRC accounted for 12.5% of global malaria cases and 11.1% of malaria deaths in 2024 [@who2025world]. Prevalence ranges from 5.1% in Kinshasa to 61.0% in Bas-Uele [@ins2024dhs].
+- Vector populations (*An. gambiae* s.l., *An. funestus* and other *Anopheles* spp.) vary markedly in distribution and insecticide resistance [@loonen2020vectors; @dennis2024cryptic].
+- The national malaria programme (PNLP) expanded its entomological sentinel network from 11 sites (2003–05) to 26 (2014), with 52 planned in 2021 [@pnlp2015directives; @pnlp2023selection].
 - How these expansions changed geographical coverage and supervisory travel had not been assessed.
 
 # Aim and objectives
@@ -171,9 +180,9 @@ key_stats <- function(title, values) {
 
 # Data and methods
 
-- **Networks:** 11 sites (2003–05), 26 sites (2014) and 51 of the 52 planned sites (2021), from PNLP technical reports.
+- **Networks:** 11 sites (2003–05), 26 sites (2014) and 51 of the 52 planned sites (2021), from PNLP technical reports [@pnlp2015directives; @pnlp2021validation; @pnlp2023selection].
 - **Geocoding:** Google Maps, GRID3, Nominatim and Photon. Site confidence: 57 high, 3 medium, 2 low.
-- **Travel time:** MAP 2020 walking and motorised friction surfaces; least-cost times and routes on eight-neighbour, geo-corrected transition graphs.
+- **Travel time:** MAP 2020 walking and motorised friction surfaces [@weiss2020global; @pfeffer2018malariaatlas]; least-cost times and routes on eight-neighbour, geo-corrected transition graphs [@vanetten2017gdistance].
 - **Outputs:** DPS-to-assigned-site travel time (`r n_journeys` journeys, `r n_pairs` distinct pairs), and the share of land area within 24 h walking or 6 h motorised travel of the nearest site.
 
 # The network grew from 11 to 51 mapped sites
@@ -198,21 +207,21 @@ Under the proposed network, `r pct(100 - walk24[3])` of the modelled land area r
 key_stats("Land area within 24 h walking of the nearest sentinel site", walk24)
 ```
 
-![Walking time to the nearest sentinel site under each configuration.](output/poster/FigureS1_walking_nearest_sentinel_sites_300dpi.png){#fig-walking width=100%}
+![Walking time to the nearest sentinel site under each configuration.](output/poster/FigureS1_walking_nearest_sentinel_sites_300dpi.png){#fig-walking width=74%}
 
 ```{r}
 #| output: asis
 key_stats("Land area within 6 h motorised travel of the nearest sentinel site", motor6)
 ```
 
-![Motorised travel time to the nearest sentinel site under each configuration.](output/poster/FigureS2_motorized_nearest_sentinel_sites_300dpi.png){#fig-motorised width=100%}
+![Motorised travel time to the nearest sentinel site under each configuration.](output/poster/FigureS2_motorized_nearest_sentinel_sites_300dpi.png){#fig-motorised width=74%}
 
 # Conclusions
 
 - Network expansion improved geographical coverage.
 - The added coverage came with greater operational challenges: many proposed sites need substantially longer travel from DPS offices.
 - Accessibility and representativeness are not the same. Accessible sites may not represent the ecological diversity of malaria vectors.
-- Site selection should weigh accessibility, ecological representativeness and operational resources together.
+- Site selection should weigh accessibility, ecological representativeness and operational resources together [@longbottom2020quantifying; @monteiro2024adaptive].
 
 # Limitations
 
@@ -221,3 +230,8 @@ Travel times are modelled and were not validated against field journeys. Seasona
 # Acknowledgements
 
 We thank the DRC Malaria Control Programme; our ECR mentors, Dr. Jailos Lubinda, Dr. James Colborn and Dr. Valérian Turbé; the project reviewers, Dr. Ousmane Diao and Dr. Lembris Njotto; Ms Christine Myalla for technical and methodological support; and the Malaria Atlas Project team (East Africa and Perth) for training.
+
+# References
+
+::: {#refs}
+:::
