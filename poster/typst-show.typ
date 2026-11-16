@@ -32,6 +32,9 @@ $for(poster.footer)$
 $endfor$
   ),
 $endif$
+$if(poster.references-size)$
+  references-size: $poster.references-size$,
+$endif$
 $if(poster.contact)$
   contact: [$poster.contact$],
 $endif$

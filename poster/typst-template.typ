@@ -43,6 +43,16 @@
   },
 )
 
+// Start a new column here, but only when the poster has `cols` columns, so one
+// qmd can carry breaks for several layouts:
+//   ```{=typst}
+//   #poster-colbreak(3)
+//   ```
+#let poster-ncols = state("poster-ncols", none)
+#let poster-colbreak(cols) = context {
+  if poster-ncols.get() == cols { colbreak() }
+}
+
 // Logos are scaled to a common area, so wide wordmarks and square seals carry
 // similar visual weight.
 #let poster-logo(path, area, max-height) = context {
@@ -69,6 +79,7 @@
   font: ("Liberation Sans", "Arial"),
   lang: "en",
   region: "GB",
+  references-size: 0.9em,
   doc,
 ) = {
   // ---- page geometry -------------------------------------------------------
@@ -161,8 +172,8 @@
   show figure: set block(breakable: false)
   show figure.caption: it => align(left, text(size: 0.74em, it))
   // Reference list: the qmd's ::: {#refs} div, filled by Pandoc's citeproc.
-  show <refs>: set text(size: 0.62em)
-  show <refs>: set par(leading: 0.4em, spacing: 0.45em)
+  show <refs>: set text(size: references-size)
+  show <refs>: set par(leading: 0.5em, spacing: 0.8em)
 
   // ---- header: gold title block, logo on the right -------------------------
   let title-block = block(
@@ -218,5 +229,6 @@
   }
 
   v(4 * mm, weak: true)
+  poster-ncols.update(ncols)
   columns(ncols, gutter: 24 * mm, doc)
 }

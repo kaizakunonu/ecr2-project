@@ -23,11 +23,12 @@ csl: poster/vancouver.csl           # NLM/Vancouver, numbered
 mainfont: Liberation Sans   # use Arial on Windows or macOS
 
 poster:
-  size: a0                # a0, a1, a2, a3 or a4
-  orientation: portrait   # portrait or landscape
-  columns: 2              # delete this line for 2 in portrait, 4 in landscape
-  # width: 36in           # custom paper: set width and height instead of size
-  # height: 48in
+  size: a0                # a0, a1, a2, a3 or a4; ignored while width and height are set
+  orientation: landscape  # portrait or landscape
+  columns: 4              # delete this line for 2 in portrait, 4 in landscape
+  width: 36in             # custom paper: set width and height instead of size
+  height: 48in
+  references-size: 0.75em # reference-list text; default 0.9em
   logo: poster/logos/map.png
   programme: |
     **MAP Dar ECR Development Program**\
@@ -81,8 +82,15 @@ poster/vancouver.csl. Typst's own bibliography is avoided: Quarto 1.9 escapes
 the underscores in the .bib path, and it prints `and others` as "others".
 
 The poster is one page. If the PDF has two, the content overflowed: shorten
-the text or narrow a figure (the two maps in the right column are already at
-74% to make room for the references).
+the text, narrow a figure or lower references-size.
+
+The main layout is landscape, 48 x 36 in, 4 columns. The #poster-colbreak(4)
+blocks give each column one job: 1 background and methods, 2 the network and
+supervision (Figures 1 and 2), 3 coverage and conclusions (Figures 3 and 4),
+4 limitations, acknowledgements and references. Every figure is at full
+column width. Breaks for another column count are ignored, so the
+#poster-colbreak(3) before Limitations is kept for the portrait 3-column
+layout (A0: Figure 2 at 80%, references-size 0.9em).
 -->
 
 ```{r}
@@ -185,6 +193,10 @@ key_stats <- function(title, values) {
 - **Travel time:** MAP 2020 walking and motorised friction surfaces [@weiss2020global; @pfeffer2018malariaatlas]; least-cost times and routes on eight-neighbour, geo-corrected transition graphs [@vanetten2017gdistance].
 - **Outputs:** DPS-to-assigned-site travel time (`r n_journeys` journeys, `r n_pairs` distinct pairs), and the share of land area within 24 h walking or 6 h motorised travel of the nearest site.
 
+```{=typst}
+#poster-colbreak(4)
+```
+
 # The network grew from 11 to 51 mapped sites
 
 The proposed network adds `r n_proposed` sites. One further planned site, in Kasaï-Central, could not be located.
@@ -196,7 +208,11 @@ The proposed network adds `r n_proposed` sites. One further planned site, in Kas
 - `r proposed_over_24h`% of the proposed additional sites are more than 24 walking hours from their assigned DPS office.
 - Walking accessibility to the nearest DPS office rose from `r pct(dps_walk24[1])` to `r pct(dps_walk24[2])` of land area, and does not change under the proposed expansion.
 
-![Modelled walking and motorised travel times from DPS offices to their assigned sentinel sites.](output/poster/Figure4_assigned_travel_time_distributions_300dpi.png){#fig-assigned width=56%}
+![Modelled walking and motorised travel times from DPS offices to their assigned sentinel sites.](output/poster/Figure4_assigned_travel_time_distributions_300dpi.png){#fig-assigned width=100%}
+
+```{=typst}
+#poster-colbreak(4)
+```
 
 # Coverage improved, but large areas remain remote
 
@@ -207,14 +223,14 @@ Under the proposed network, `r pct(100 - walk24[3])` of the modelled land area r
 key_stats("Land area within 24 h walking of the nearest sentinel site", walk24)
 ```
 
-![Walking time to the nearest sentinel site under each configuration.](output/poster/FigureS1_walking_nearest_sentinel_sites_300dpi.png){#fig-walking width=74%}
+![Walking time to the nearest sentinel site under each configuration.](output/poster/FigureS1_walking_nearest_sentinel_sites_300dpi.png){#fig-walking width=100%}
 
 ```{r}
 #| output: asis
 key_stats("Land area within 6 h motorised travel of the nearest sentinel site", motor6)
 ```
 
-![Motorised travel time to the nearest sentinel site under each configuration.](output/poster/FigureS2_motorized_nearest_sentinel_sites_300dpi.png){#fig-motorised width=74%}
+![Motorised travel time to the nearest sentinel site under each configuration.](output/poster/FigureS2_motorized_nearest_sentinel_sites_300dpi.png){#fig-motorised width=100%}
 
 # Conclusions
 
@@ -222,6 +238,11 @@ key_stats("Land area within 6 h motorised travel of the nearest sentinel site", 
 - The added coverage came with greater operational challenges: many proposed sites need substantially longer travel from DPS offices.
 - Accessibility and representativeness are not the same. Accessible sites may not represent the ecological diversity of malaria vectors.
 - Site selection should weigh accessibility, ecological representativeness and operational resources together [@longbottom2020quantifying; @monteiro2024adaptive].
+
+```{=typst}
+#poster-colbreak(3)  // 3 columns: Limitations opens the rightmost column
+#poster-colbreak(4)  // and in 4 columns
+```
 
 # Limitations
 

@@ -63,7 +63,7 @@ Rscript build_walking_inputs.R --chain open_first --out output_open_first
 # run_analysis(full_rebuild = TRUE) to recompute it.
 Rscript 06_run_analysis.R
 quarto render ecr_final_report.qmd   # reads output/unified/
-quarto render ecr_poster.qmd         # reads output/unified/ and output/poster/; Typst, one A0 page
+quarto render ecr_poster.qmd         # reads output/unified/ and output/poster/; Typst, one 48 x 36 in landscape page
 ```
 
 The test suite has no per-test selection. It is a single script of `ok()` assertions grouped by `section()`.
