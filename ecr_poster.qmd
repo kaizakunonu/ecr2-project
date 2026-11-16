@@ -26,8 +26,8 @@ poster:
   size: a0                # a0, a1, a2, a3 or a4; ignored while width and height are set
   orientation: landscape  # portrait or landscape
   columns: 4              # delete this line for 2 in portrait, 4 in landscape
-  width: 36in             # custom paper: set width and height instead of size
-  height: 48in
+  width: 48in             # custom paper: set width and height instead of size
+  height: 36in
   references-size: 0.75em # reference-list text; default 0.9em
   logo: poster/logos/map.png
   programme: |
