@@ -37,7 +37,6 @@ poster:
     More sentinel sites can reduce coverage gaps without ensuring operational
     accessibility: future planning should balance coverage with a network that
     can be supported and operated consistently.
-  contact: "Kaiza Ilomo · kilomo@ihi.or.tz"
   footer:
     - label: DRC Malaria Control Programme
       logos:
@@ -48,9 +47,6 @@ poster:
         - poster/logos/ihi.png
         - poster/logos/thekids.png
         - poster/logos/curtin.png
-    - label: Funder
-      logos:
-        - poster/logos/gates-foundation.png
 
 execute:
   echo: false
