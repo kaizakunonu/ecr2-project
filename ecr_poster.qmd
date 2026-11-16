@@ -1,254 +1,202 @@
 ---
-title: "Geographic Accessibility of Malaria Entomological Sentinel Sites in the Democratic Republic of the Congo"
-author:
-  - name: Kaiza Ilomo
-    affiliations:
-      - ref: ihi
-  - name: Arsène Bokulu
-    affiliations:
-      - ref: inrb
-  - name: Victoire Nsabatien
-    affiliations:
-      - ref: kids
-affiliations:
-  - id: ihi
-    name: Ifakara Health Institute
-  - id: inrb
-    name: Institut National de Recherche Biomédicale (INRB), Kinshasa, DRC
-  - id: kids
-    name: The Kids Research Institute Australia, Perth Children’s Hospital, Nedlands, WA, Australia
-lang: en-GB
-bibliography: ecr_final_report.bib   # shared with ecr_final_report.qmd
-csl: poster/vancouver.csl           # NLM/Vancouver, numbered
-mainfont: Liberation Sans   # use Arial on Windows or macOS
-
-poster:
-  size: a0                # a0, a1, a2, a3 or a4; ignored while width and height are set
-  orientation: landscape  # portrait or landscape
-  columns: 4              # delete this line for 2 in portrait, 4 in landscape
-  width: 48in             # custom paper: set width and height instead of size
-  height: 36in
-  references-size: 0.75em # reference-list text; default 0.9em
-  logo: poster/logos/map.png
-  programme: |
-    **MAP Dar ECR Development Program**\
-    Cohort 2 (2026)
-  key-message: >
-    More sentinel sites can reduce coverage gaps without ensuring operational
-    accessibility: future planning should balance coverage with a network that
-    can be supported and operated consistently.
-  footer:
-    - label: DRC Malaria Control Programme
-      logos:
-        - poster/logos/pnlp.png
-    - label: Universities and research institutes
-      logos:
-        - poster/logos/unikin-ksph.png
-        - poster/logos/ihi.png
-        - poster/logos/thekids.png
-        - poster/logos/curtin.png
-
-execute:
-  echo: false
-  warning: false
-  message: false
-
 format:
   typst:
-    citeproc: true   # Pandoc's citeproc, as in the final report
-    template-partials:
-      - poster/typst-template.typ
-      - poster/typst-show.typ
+    font-paths: fonts
 ---
 
-<!--
-Render:  source("06_run_analysis.R"), then quarto render ecr_poster.qmd
-         (writes ecr_poster.pdf)
+```{=typst}
+#set page(width: 48in, height: 36in, margin: 0pt, numbering: none)
+#set smartquote(enabled: false)
 
-Like ecr_final_report.qmd, the poster is built from the pipeline's outputs:
-numbers from the tables in output/unified/, figures from the 300-dpi copies
-in output/poster/ (written by R/01, R/02 and R/05).
+#let gold = rgb("#DEA900")
+#let sans = ("Open Sans", "Arial")
+#let gothic = ("Century Gothic", "Arial")
+#let calibri = ("Calibri", "Arial")
+#let wide = (0.24, 0.12)
 
-Layout lives in poster/typst-template.typ. Size, orientation and columns are
-set in the `poster:` block above; all type and spacing scale with the paper.
+#let at(x, y, body) = place(top + left, dx: x * 1in, dy: y * 1in, body)
 
-Citations use the final report's ecr_final_report.bib, through Pandoc's
-citeproc (as the report does) with the numbered NLM/Vancouver style in
-poster/vancouver.csl. Typst's own bibliography is avoided: Quarto 1.9 escapes
-the underscores in the .bib path, and it prints `and others` as "others".
-
-The poster is one page. If the PDF has two, the content overflowed: shorten
-the text, narrow a figure or lower references-size.
-
-The main layout is landscape, 48 x 36 in, 4 columns. The #poster-colbreak(4)
-blocks give each column one job: 1 background and methods, 2 the network and
-supervision (Figures 1 and 2), 3 coverage and conclusions (Figures 3 and 4),
-4 limitations, acknowledgements and references. Every figure is at full
-column width. Breaks for another column count are ignored, so the
-#poster-colbreak(3) before Limitations is kept for the portrait 3-column
-layout (A0: Figure 2 at 80%, references-size 0.9em).
--->
-
-```{r}
-#| label: setup
-#| include: false
-
-suppressPackageStartupMessages({
-  library(dplyr)
-  library(readr)
-})
-
-out_dir <- "output/unified"
-
-read_data <- function(filename) {
-  read_csv(
-    file.path(out_dir, filename),
-    show_col_types = FALSE
-  )
+#let textbox(
+  x, y, w, body, h: none, margin: (0.1, 0.05), font: sans, size: 26.28pt,
+  weight: "regular", spacing: 1.0, align-h: left, justify: false,
+) = {
+  let (mx, my) = margin
+  let content = block(width: (w - 2 * mx + 0.01) * 1in, {
+    set text(
+      font: font, size: size, weight: weight, fill: black,
+      top-edge: (1.2 * spacing - 0.2) * 1em, bottom-edge: -0.2em,
+      hyphenate: false, ligatures: false, overhang: false,
+    )
+    set par(
+      justify: justify, leading: 0pt, spacing: 0pt,
+      linebreaks: "simple", first-line-indent: 0pt,
+    )
+    set align(align-h)
+    body
+  })
+  if h == none {
+    at(x + mx, y + my, content)
+  } else {
+    context at(x + mx, y + h / 2 - measure(content).height / 1in / 2, content)
+  }
 }
 
-journeys <- read_data("Table_assigned_travel_times.csv")
-routes <- read_data("walking_route_distances.csv")
-coverage <- read_data("Table_spatial_accessibility_summary.csv")
-dps_coverage <- read_data("Table_dps_spatial_accessibility_summary.csv")
-
-stopifnot(
-  nrow(journeys) == 176,
-  nrow(routes) == 88
+#let body-text(x, y, w, body, margin: (0.1, 0.05)) = textbox(
+  x, y, w, body, margin: margin, spacing: 1.5, justify: true,
 )
 
-pct <- function(x) paste0(format(round(x, 1), nsmall = 1), "%")
+#let subheading(x, y, w, body, spacing: 1.1) = textbox(
+  x, y, w, body, margin: wide, font: gothic, size: 44pt, weight: "bold", spacing: spacing,
+)
 
-# Share of modelled land area within `hours` of the nearest sentinel site
-site_cover <- function(network, mode, hours) {
-  x <- coverage$percent_modelled_area[
-    coverage$network == network &
-      coverage$mode == mode &
-      coverage$threshold_hours == hours
-  ]
-  stopifnot(length(x) == 1)
-  x
+#let caption(x, y, w, body) = textbox(
+  x, y, w, body, margin: wide, size: 18.77pt, weight: "bold", spacing: 1.1, justify: true,
+)
+
+#let bar(x, y, w, label, h: 0.8541) = {
+  let r = calc.min(w, h) / 2 * 1in
+  at(x, y, rect(width: w * 1in, height: h * 1in, fill: gold, radius: (top-left: r, bottom-right: r)))
+  textbox(x, y, w, label, h: h, font: gothic, size: 54pt, weight: "bold", align-h: center)
 }
 
-walk24 <- sapply(c(11, 26, 51), site_cover, mode = "walking", hours = 24)
-motor6 <- sapply(c(11, 26, 51), site_cover, mode = "motorized", hours = 6)
-
-# DPS offices are the same in the 26- and 51-site networks
-dps_walk24 <- dps_coverage |>
-  filter(mode == "walking", threshold_hours == 24) |>
-  arrange(network) |>
-  pull(coverage_percent)
-
-stopifnot(length(dps_walk24) == 2)
-
-walking <- filter(journeys, mode == "walking")
-proposed <- filter(walking, network == 51, stage == "2021 proposed")
-
-n_journeys <- nrow(walking)
-n_pairs <- nrow(distinct(
-  walking,
-  dps_longitude, dps_latitude, site_longitude, site_latitude
-))
-n_proposed <- nrow(proposed)
-proposed_over_24h <- round(100 * mean(proposed$travel_hours > 24))
-
-# One key-stats box (poster/typst-template.typ) for the 11/26/51 networks
-key_stats <- function(title, values) {
-  cells <- paste0(
-    '("', pct(values), '", [', c(11, 26, 51), " sites])",
-    collapse = ", "
-  )
-  cat(
-    "\n```{=typst}\n#key-stats(\n  title: [", title, "],\n  ",
-    cells, ",\n)\n```\n",
-    sep = ""
-  )
+#let card(x, y, w, h, body, corner: 0.16667, spacing: 1.0) = {
+  let r = corner * calc.min(w, h)
+  let i = 0.29289 * r
+  at(x, y, rect(width: w * 1in, height: h * 1in, stroke: 1.5pt + gold, radius: r * 1in))
+  textbox(x + i, y + i, w - 2 * i, body, h: h - 2 * i, spacing: spacing, justify: true)
 }
+
+#let picture(x, y, w, h, path, crop: (:)) = {
+  let c = (l: 0, t: 0, r: 0, b: 0) + crop
+  let (fw, fh) = (w / (1 - c.l - c.r), h / (1 - c.t - c.b))
+  at(x, y, box(width: w * 1in, height: h * 1in, clip: true, place(
+    top + left, dx: -c.l * fw * 1in, dy: -c.t * fh * 1in,
+    image(path, width: fw * 1in, height: fh * 1in, fit: "stretch"),
+  )))
+}
+
+#let sup(size, body) = text(size: 0.65 * size, baseline: -0.3 * size, body)
+
+// Logos
+#let logo = "poster/logos/"
+#picture(0.6496, 0.5522, 5.5409, 2.2029, logo + "ihi.png")
+#picture(7.1866, 0.3338, 4.1701, 2.5000, logo + "thekids.png")
+#picture(13.0357, 0.8373, 6.9918, 1.4918, logo + "curtin.png")
+#picture(22.1211, 0.4784, 3.3329, 2.3776, logo + "inrb.png")
+#picture(27.1417, 0.5552, 2.9603, 2.3000, logo + "pnlp.png")
+#picture(31.3982, 0.1457, 3.2364, 3.4274, logo + "unikin-ksph.png")
+#picture(35.8355, 0.2528, 11.7597, 2.3689, logo + "map.png")
+
+// Figures
+#let fig = "output/poster/"
+#picture(0.1392, 30.1083, 14.0000, 5.2306, fig + "Figure1_network_evolution_300dpi.png", crop: (t: 0.10333))
+#picture(15.2218, 12.7378, 16.8462, 8.2536, fig + "Figure2_walking_accessibility_300dpi.png", crop: (l: 0.11340, t: 0.09035, r: 0.11297))
+#picture(15.6917, 26.5030, 16.7697, 8.2536, fig + "Figure3_motorized_accessibility_300dpi.png", crop: (l: 0.11107, t: 0.07471, r: 0.10560))
+#picture(35.0257, 12.6192, 10.0009, 6.9933, fig + "Figure4_assigned_travel_time_distributions.png", crop: (t: 0.10190))
+
+// Title, authors and affiliations
+#textbox(4.9274, 3.2835, 37.4351, font: calibri, size: 94pt, weight: "bold", align-h: center)[
+  Geographic Accessibility of Malaria Entomological Sentinel Sites in \
+  the Democratic Republic of the Congo
+]
+
+#textbox(14.8251, 6.2006, 21.6331, font: calibri, size: 60pt, spacing: 1.15)[
+  Kaiza Ilomo#sup(60pt)[1], Arsène Bokulu#sup(60pt)[2], Victoire Nsabatien#sup(60pt)[3]
+]
+
+#textbox(0.7592, 6.8983, 47.6218, h: 1.6808, margin: (1.70065, 0.85032), font: calibri, size: 43pt, spacing: 1.15)[
+  #sup(43pt)[1 ]Ifakara Health Institute; #sup(43pt)[2]Institut National de Recherche Biomédicale (INRB), Kinshasa, DRC; #sup(43pt)[3 ]The Kids Research Institute Australia, Perth Children’s Hospital, Nedlands, WA, Australia
+]
+
+// Introduction
+#bar(0.2252, 8.4093, 14.6415)[Introduction]
+
+#body-text(0.1392, 9.4519, 14.7275, margin: wide)[
+  The Democratic Republic of the Congo (DRC) accounted for 12.5% of global malaria cases and 11.1% of malaria deaths in 2024.
+
+  Malaria prevalence varies widely across provinces (5.1% in Kinshasa to 61.0% in Bas-Uele), alongside geographical variation in malaria-vector distribution and insecticide resistance.
+
+  The National Malaria Control Programme (PNLP) progressively expanded its entomological sentinel network from 11 sites (2003–2005) to 26 (2014), with 52 sites proposed in 2021.
+
+  Despite these expansions, the network's geographical coverage and accessibility from Provincial Health Division (DPS) offices remain poorly understood.
+
+  This study aims to assess the geographical coverage and modelled walking and motorised accessibility of the DRC malaria entomological sentinel network across successive network configurations.
+]
+
+// Methodology
+#bar(0.1392, 18.4556, 14.6442)[Methodology]
+
+#body-text(-0.0359, 19.3881, 15.2578, margin: wide)[
+  *Three sentinel network configurations* were evaluated across the DRC: 11 sites (2003–2005), 26 sites (2014), and 51 sites from the proposed 2021 expansion.
+
+  *Sentinel-site and Provincial Health Division (DPS) office coordinates* were compiled from PNLP records and geocoded using Google Maps, GRID3 data, and the OpenStreetMap-based Nominatim and Photon geocoding services.
+
+  *Walking and motorised travel times between DPS offices and their assigned sentinel sites* were estimated using least-cost travel-time modelling based on 2020 Malaria Atlas Project (MAP) friction surfaces.
+
+  *Geographical accessibility and coverage* were compared across network configurations using travel-time estimates to the nearest DPS office and sentinel site.
+]
+
+// Preliminary results: network evolution
+#bar(0.1452, 26.3510, 14.6442, h: 0.8531)[Preliminary Results]
+
+#subheading(0.3659, 27.2235, 15.6342, spacing: 1.0)[Evolution of the sentinel surveillance network]
+
+#body-text(0.1071, 28.0400, 15.3969)[
+  The DRC malaria sentinel surveillance network expanded from 11 sites in 2003–2005 to 26 sites in 2014.~ The proposed 2021 expansion aimed to increase the network to 52 sites, of which 51 could be geographically identified and included in this analysis (Fig. 1).
+]
+
+#caption(0.9020, 35.4291, 15.1406)[Figure 1: Geographical expansion of the DRC malaria sentinel network (11, 26 and 51 sites).]
+
+// Preliminary results: accessibility
+#bar(15.9269, 8.4219, 31.6294)[Preliminary Results]
+
+#subheading(16.1567, 9.2634, 15.6866)[Walking accessibility to the nearest sentinel site]
+
+#body-text(16.1089, 10.1469, 15.8865)[
+  Within 24 hours of walking travel, geographical coverage increased from 10.3% under the historical 11-site network to 22.9% with 26 sites and 38.4% with 51 sites. Despite this improvement, large areas of the country remained beyond the selected walking-time threshold (Fig. 2).
+]
+
+#caption(17.1826, 20.8857, 16.9179)[Figure 2: Walking accessibility to the nearest sentinel site across the three network configurations.]
+
+#subheading(16.2513, 21.4067, 15.6866)[Motorised accessibility to the nearest sentinel site]
+
+#body-text(16.2092, 22.3095, 15.6342)[
+  Within six hours of motorised travel, geographical coverage increased from 31.2% with 11 sites to 52.7% with 26 sites and 61.2% with 51 sites. The greatest improvement occurred during the expansion from 11 to 26 sites, with smaller gains from the proposed additions. Although motorised accessibility was considerably greater than walking accessibility, substantial geographical gaps remained, particularly in areas distant from surveillance locations (Fig. 3).
+]
+
+#caption(17.1985, 35.1298, 13.6030)[Figure 3: Motorised accessibility to the nearest sentinel site across the three network configurations.]
+
+// Travel requirements
+#subheading(33.3950, 9.2735, 15.6866)[Travel requirements for sentinel surveillance]
+
+#body-text(33.4383, 9.9121, 14.0017)[
+  The newly proposed sentinel sites generally required longer journeys from their supervising Provincial Health Division (DPS) offices. Of the 25 proposed additional sites, 14 required more than 24 hours of modelled walking travel, highlighting potential challenges for routine surveillance and supervision (Fig. 4).
+]
+
+#caption(33.6095, 19.4953, 13.4306)[Figure 4: Modelled walking and motorised travel times from DPS offices to assigned sentinel sites across the three network configurations.]
+
+// Key takeaway
+#bar(32.4231, 20.4138, 15.0169)[Key Takeaway]
+
+#card(32.4961, 21.5136, 15.1300, 6.5362, corner: 0.06615, spacing: 1.5)[
+  This study provides the first geospatial assessment of accessibility across the DRC malaria sentinel surveillance network. Expansion of the network improved geographical coverage but increased travel requirements for several newly proposed sentinel sites.
+
+  Geospatial accessibility modelling helped assess the relationship between geographical coverage and operational accessibility and identify areas that remain poorly served by the network.
+
+  The findings show that expanding geographical coverage and ensuring that surveillance sites remain accessible are both essential for effective and sustainable malaria surveillance.
+]
+
+// Future work
+#bar(32.8164, 28.4001, 15.0169)[Future work]
+
+#card(32.7352, 29.5645, 14.8910, 2.3271)[
+  Future work will integrate geographical accessibility with ecological representativeness, malaria-vector distributions, malaria transmission patterns and operational constraints to evaluate alternative network configurations and support evidence-based sentinel-site selection across the DRC.
+]
+
+// Acknowledgements
+#bar(32.8164, 32.1961, 15.0169)[Acknowledgements]
+
+#card(32.8793, 33.4246, 14.8910, 2.2412)[
+  Technical and methodological support for the development, implementation, and reproducibility of the walking and motorised accessibility-modelling workflow, including least-cost routing, was provided by Christine Myalla.
+]
 ```
-
-# Background
-
-- The DRC accounted for 12.5% of global malaria cases and 11.1% of malaria deaths in 2024 [@who2025world]. Prevalence ranges from 5.1% in Kinshasa to 61.0% in Bas-Uele [@ins2024dhs].
-- Vector populations (*An. gambiae* s.l., *An. funestus* and other *Anopheles* spp.) vary markedly in distribution and insecticide resistance [@loonen2020vectors; @dennis2024cryptic].
-- The national malaria programme (PNLP) expanded its entomological sentinel network from 11 sites (2003–05) to 26 (2014), with 52 planned in 2021 [@pnlp2015directives; @pnlp2023selection].
-- How these expansions changed geographical coverage and supervisory travel had not been assessed.
-
-# Aim and objectives
-
-**Aim:** to assess the geographical coverage and operational accessibility of the sentinel network under three successive configurations.
-
-1. Map and compare the 11-site, 26-site and proposed 2021 configurations.
-2. Estimate walking and motorised travel times between provincial health division (DPS) offices and their assigned sites.
-3. Assess national accessibility to the nearest DPS office and sentinel site.
-4. Estimate walking-route distances and their implications for surveillance operations.
-
-# Data and methods
-
-- **Networks:** 11 sites (2003–05), 26 sites (2014) and 51 of the 52 planned sites (2021), from PNLP technical reports [@pnlp2015directives; @pnlp2021validation; @pnlp2023selection].
-- **Geocoding:** Google Maps, GRID3, Nominatim and Photon. Site confidence: 57 high, 3 medium, 2 low.
-- **Travel time:** MAP 2020 walking and motorised friction surfaces [@weiss2020global; @pfeffer2018malariaatlas]; least-cost times and routes on eight-neighbour, geo-corrected transition graphs [@vanetten2017gdistance].
-- **Outputs:** DPS-to-assigned-site travel time (`r n_journeys` journeys, `r n_pairs` distinct pairs), and the share of land area within 24 h walking or 6 h motorised travel of the nearest site.
-
-```{=typst}
-#poster-colbreak(4)
-```
-
-# The network grew from 11 to 51 mapped sites
-
-The proposed network adds `r n_proposed` sites. One further planned site, in Kasaï-Central, could not be located.
-
-![Sentinel sites in the historical (2003–05), established (2014) and proposed (2021) configurations.](output/poster/Figure1_network_evolution_300dpi.png){#fig-network width=100%}
-
-# New sites are harder to supervise
-
-- `r proposed_over_24h`% of the proposed additional sites are more than 24 walking hours from their assigned DPS office.
-- Walking accessibility to the nearest DPS office rose from `r pct(dps_walk24[1])` to `r pct(dps_walk24[2])` of land area, and does not change under the proposed expansion.
-
-![Modelled walking and motorised travel times from DPS offices to their assigned sentinel sites.](output/poster/Figure4_assigned_travel_time_distributions_300dpi.png){#fig-assigned width=100%}
-
-```{=typst}
-#poster-colbreak(4)
-```
-
-# Coverage improved, but large areas remain remote
-
-Under the proposed network, `r pct(100 - walk24[3])` of the modelled land area remains beyond 24 hours of walking, and `r pct(100 - motor6[3])` beyond six hours of motorised travel, from the nearest sentinel site.
-
-```{r}
-#| output: asis
-key_stats("Land area within 24 h walking of the nearest sentinel site", walk24)
-```
-
-![Walking time to the nearest sentinel site under each configuration.](output/poster/FigureS1_walking_nearest_sentinel_sites_300dpi.png){#fig-walking width=100%}
-
-```{r}
-#| output: asis
-key_stats("Land area within 6 h motorised travel of the nearest sentinel site", motor6)
-```
-
-![Motorised travel time to the nearest sentinel site under each configuration.](output/poster/FigureS2_motorized_nearest_sentinel_sites_300dpi.png){#fig-motorised width=100%}
-
-# Conclusions
-
-- Network expansion improved geographical coverage.
-- The added coverage came with greater operational challenges: many proposed sites need substantially longer travel from DPS offices.
-- Accessibility and representativeness are not the same. Accessible sites may not represent the ecological diversity of malaria vectors.
-- Site selection should weigh accessibility, ecological representativeness and operational resources together [@longbottom2020quantifying; @monteiro2024adaptive].
-
-```{=typst}
-#poster-colbreak(3)  // 3 columns: Limitations opens the rightmost column
-#poster-colbreak(4)  // and in 4 columns
-```
-
-# Limitations
-
-Travel times are modelled and were not validated against field journeys. Seasonal flooding, road closures, transport availability and security were not modelled. Some coordinates are administrative centres, not verified facilities. Coverage is a share of land area, not of population or vector ecology. Costs, staffing and sampling frequency were not evaluated.
-
-# Acknowledgements
-
-We thank the DRC Malaria Control Programme; our ECR mentors, Dr. Jailos Lubinda, Dr. James Colborn and Dr. Valérian Turbé; the project reviewers, Dr. Ousmane Diao and Dr. Lembris Njotto; Ms Christine Myalla for technical and methodological support; and the Malaria Atlas Project team (East Africa and Perth) for training.
-
-# References
-
-::: {#refs}
-:::
