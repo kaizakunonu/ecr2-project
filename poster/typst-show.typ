@@ -28,7 +28,7 @@ $endif$
 $if(poster.footer)$
   footer: (
 $for(poster.footer)$
-    (label: [$it.label$], logos: ($for(it.logos)$"$it$", $endfor$)),
+    (label: $if(it.label)$[$it.label$]$else$none$endif$, logos: ($for(it.logos)$"$it$", $endfor$)),
 $endfor$
   ),
 $endif$
