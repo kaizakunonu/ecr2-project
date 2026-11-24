@@ -4,6 +4,61 @@ format:
     font-paths: fonts
 ---
 
+```{r}
+#| label: setup
+#| include: false
+
+# Every result on the poster comes from the pipeline's tables in
+# output/unified/, as in ecr_final_report.qmd, so a re-run of
+# 06_run_analysis.R updates the poster on the next render. The literature
+# figures in the introduction are cited facts and stay as text.
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(readr)
+})
+
+out_dir <- "output/unified"
+
+read_data <- function(filename) {
+  read_csv(file.path(out_dir, filename), show_col_types = FALSE)
+}
+
+journeys <- read_data("Table_assigned_travel_times.csv")
+coverage <- read_data("Table_spatial_accessibility_summary.csv")
+
+missing_2021 <- read_csv(
+  "output/network_51/missing_2021_site.csv",
+  show_col_types = FALSE
+)
+
+stopifnot(nrow(journeys) == 176)
+
+# Share of the modelled land area within `hours` of the nearest sentinel site
+pct <- function(network_id, mode_id, hours) {
+  x <- coverage$percent_modelled_area[
+    coverage$network == network_id &
+      coverage$mode == mode_id &
+      coverage$threshold_hours == hours
+  ]
+  stopifnot(length(x) == 1)
+  sprintf("%.1f%%", x)
+}
+
+walking <- filter(journeys, mode == "walking")
+sites <- table(walking$network)
+n11 <- sites[["11"]]
+n26 <- sites[["26"]]
+n51 <- sites[["51"]]
+
+proposed <- filter(walking, stage == "2021 proposed")
+n_proposed <- nrow(proposed)
+n_proposed_over_24h <- sum(proposed$travel_hours > 24)
+
+# The 2021 plan also had a site that could not be located (Kasai-Central)
+n_planned <- n51 + nrow(missing_2021)
+```
+
 ```{=typst}
 #set page(width: 48in, height: 36in, margin: 0pt, numbering: none)
 #set smartquote(enabled: false)
@@ -90,9 +145,9 @@ format:
 // Figures
 #let fig = "output/poster/"
 #picture(0.1392, 30.1083, 14.0000, 5.2306, fig + "Figure1_network_evolution_300dpi.png", crop: (t: 0.10333))
-#picture(15.2218, 12.7378, 16.8462, 8.2536, fig + "Figure2_walking_accessibility_300dpi.png", crop: (l: 0.11340, t: 0.09035, r: 0.11297))
-#picture(15.6917, 26.5030, 16.7697, 8.2536, fig + "Figure3_motorized_accessibility_300dpi.png", crop: (l: 0.11107, t: 0.07471, r: 0.10560))
-#picture(35.0257, 12.6192, 10.0009, 6.9933, fig + "Figure4_assigned_travel_time_distributions.png", crop: (t: 0.10190))
+#picture(15.2218, 12.7378, 16.8462, 8.2536, fig + "FigureS1_walking_nearest_sentinel_sites_300dpi.png", crop: (l: 0.11340, t: 0.09035, r: 0.11297))
+#picture(15.6917, 26.5030, 16.7697, 8.2536, fig + "FigureS2_motorized_nearest_sentinel_sites_300dpi.png", crop: (l: 0.11107, t: 0.07471, r: 0.10560))
+#picture(35.0257, 12.6192, 10.0009, 6.9933, fig + "Figure4_assigned_travel_time_distributions_300dpi.png", crop: (t: 0.10190))
 
 // Title, authors and affiliations
 #textbox(4.9274, 3.2835, 37.4351, font: calibri, size: 94pt, weight: "bold", align-h: center)[
@@ -116,7 +171,7 @@ format:
 
   Malaria prevalence varies widely across provinces (5.1% in Kinshasa to 61.0% in Bas-Uele), alongside geographical variation in malaria-vector distribution and insecticide resistance.
 
-  The National Malaria Control Programme (PNLP) progressively expanded its entomological sentinel network from 11 sites (2003–2005) to 26 (2014), with 52 sites proposed in 2021.
+  The National Malaria Control Programme (PNLP) progressively expanded its entomological sentinel network from `r n11` sites (2003–2005) to `r n26` (2014), with `r n_planned` sites proposed in 2021.
 
   Despite these expansions, the network's geographical coverage and accessibility from Provincial Health Division (DPS) offices remain poorly understood.
 
@@ -127,7 +182,7 @@ format:
 #bar(0.1392, 18.4556, 14.6442)[Methodology]
 
 #body-text(-0.0359, 19.3881, 15.2578, margin: wide)[
-  *Three sentinel network configurations* were evaluated across the DRC: 11 sites (2003–2005), 26 sites (2014), and 51 sites from the proposed 2021 expansion.
+  *Three sentinel network configurations* were evaluated across the DRC: `r n11` sites (2003–2005), `r n26` sites (2014), and `r n51` sites from the proposed 2021 expansion.
 
   *Sentinel-site and Provincial Health Division (DPS) office coordinates* were compiled from PNLP records and geocoded using Google Maps, GRID3 data, and the OpenStreetMap-based Nominatim and Photon geocoding services.
 
@@ -142,10 +197,10 @@ format:
 #subheading(0.3659, 27.2235, 15.6342, spacing: 1.0)[Evolution of the sentinel surveillance network]
 
 #body-text(0.1071, 28.0400, 15.3969)[
-  The DRC malaria sentinel surveillance network expanded from 11 sites in 2003–2005 to 26 sites in 2014.~ The proposed 2021 expansion aimed to increase the network to 52 sites, of which 51 could be geographically identified and included in this analysis (Fig. 1).
+  The DRC malaria sentinel surveillance network expanded from `r n11` sites in 2003–2005 to `r n26` sites in 2014.~ The proposed 2021 expansion aimed to increase the network to `r n_planned` sites, of which `r n51` could be geographically identified and included in this analysis (Fig. 1).
 ]
 
-#caption(0.9020, 35.4291, 15.1406)[Figure 1: Geographical expansion of the DRC malaria sentinel network (11, 26 and 51 sites).]
+#caption(0.9020, 35.4291, 15.1406)[Figure 1: Geographical expansion of the DRC malaria sentinel network (`r n11`, `r n26` and `r n51` sites).]
 
 // Preliminary results: accessibility
 #bar(15.9269, 8.4219, 31.6294)[Preliminary Results]
@@ -153,7 +208,7 @@ format:
 #subheading(16.1567, 9.2634, 15.6866)[Walking accessibility to the nearest sentinel site]
 
 #body-text(16.1089, 10.1469, 15.8865)[
-  Within 24 hours of walking travel, geographical coverage increased from 10.3% under the historical 11-site network to 22.9% with 26 sites and 38.4% with 51 sites. Despite this improvement, large areas of the country remained beyond the selected walking-time threshold (Fig. 2).
+  Within 24 hours of walking travel, geographical coverage increased from `r pct(11, "walking", 24)` under the historical `r n11`-site network to `r pct(26, "walking", 24)` with `r n26` sites and `r pct(51, "walking", 24)` with `r n51` sites. Despite this improvement, large areas of the country remained beyond the selected walking-time threshold (Fig. 2).
 ]
 
 #caption(17.1826, 20.8857, 16.9179)[Figure 2: Walking accessibility to the nearest sentinel site across the three network configurations.]
@@ -161,7 +216,7 @@ format:
 #subheading(16.2513, 21.4067, 15.6866)[Motorised accessibility to the nearest sentinel site]
 
 #body-text(16.2092, 22.3095, 15.6342)[
-  Within six hours of motorised travel, geographical coverage increased from 31.2% with 11 sites to 52.7% with 26 sites and 61.2% with 51 sites. The greatest improvement occurred during the expansion from 11 to 26 sites, with smaller gains from the proposed additions. Although motorised accessibility was considerably greater than walking accessibility, substantial geographical gaps remained, particularly in areas distant from surveillance locations (Fig. 3).
+  Within six hours of motorised travel, geographical coverage increased from `r pct(11, "motorized", 6)` with `r n11` sites to `r pct(26, "motorized", 6)` with `r n26` sites and `r pct(51, "motorized", 6)` with `r n51` sites. The greatest improvement occurred during the expansion from `r n11` to `r n26` sites, with smaller gains from the proposed additions. Although motorised accessibility was considerably greater than walking accessibility, substantial geographical gaps remained, particularly in areas distant from surveillance locations (Fig. 3).
 ]
 
 #caption(17.1985, 35.1298, 13.6030)[Figure 3: Motorised accessibility to the nearest sentinel site across the three network configurations.]
@@ -170,7 +225,7 @@ format:
 #subheading(33.3950, 9.2735, 15.6866)[Travel requirements for sentinel surveillance]
 
 #body-text(33.4383, 9.9121, 14.0017)[
-  The newly proposed sentinel sites generally required longer journeys from their supervising Provincial Health Division (DPS) offices. Of the 25 proposed additional sites, 14 required more than 24 hours of modelled walking travel, highlighting potential challenges for routine surveillance and supervision (Fig. 4).
+  The newly proposed sentinel sites generally required longer journeys from their supervising Provincial Health Division (DPS) offices. Of the `r n_proposed` proposed additional sites, `r n_proposed_over_24h` required more than 24 hours of modelled walking travel, highlighting potential challenges for routine surveillance and supervision (Fig. 4).
 ]
 
 #caption(33.6095, 19.4953, 13.4306)[Figure 4: Modelled walking and motorised travel times from DPS offices to assigned sentinel sites across the three network configurations.]
