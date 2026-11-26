@@ -1,0 +1,588 @@
+---
+title: "DRC sentinel-site accessibility: the code behind the results"
+subtitle: "From geocoded sites to the figures, the report and the poster"
+date: last-modified
+engine: knitr
+number-sections: true
+
+execute:
+  echo: true
+  warning: false
+  message: false
+
+format:
+  html:
+    theme: cosmo
+    fontsize: 1.15em
+    toc: true
+    toc-location: left
+    toc-depth: 1
+    toc-title: "Sections"
+    embed-resources: true
+    code-fold: false
+    code-summary: "Show code"
+    code-tools: true
+    lightbox: true
+    code-overflow: wrap
+    grid:
+      body-width: 900px
+      margin-width: 200px
+    include-in-header:
+      text: |
+        <style>pre.sourceCode { font-size: 0.78em; }</style>
+    fig-cap-location: bottom
+    mermaid:
+      theme: neutral
+    include-after-body:
+      text: |
+        <script>
+        // Quarto 1.9's Show/Hide All Code looks for `.cell > details > .sourceCode`,
+        // which no fold matches once the copy-button wrapper is added; toggle them all.
+        for (const [id, open] of [["quarto-show-all-code", true], ["quarto-hide-all-code", false]]) {
+          document.getElementById(id)?.addEventListener("click", () =>
+            document.querySelectorAll("details.code-fold").forEach(d => { d.open = open; }));
+        }
+        </script>
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(readr)
+  library(tidyr)
+  library(sf)
+  library(leaflet)
+  library(ggplot2)
+  library(knitr)
+})
+
+out_dir <- "output/unified"
+
+# The page's one helper: the lines of `file` from the first line containing
+# `from` up to, not including, the next line containing `to`. Code from the
+# pipeline is pulled through it at render time, so it is always the code that
+# ran, never a copy.
+excerpt <- function(file, from, to) {
+  lines <- readLines(file, encoding = "UTF-8", warn = FALSE)
+  start <- grep(from, lines, fixed = TRUE)[1]
+  if (is.na(start)) stop("Anchor not found in ", file, ": ", from)
+  end <- start + grep(to, lines[-seq_len(start)], fixed = TRUE)[1]
+  if (is.na(end)) stop("Anchor not found in ", file, " after '", from, "': ", to)
+  out <- lines[start:(end - 1)]
+  out[seq_len(max(which(nzchar(trimws(out)))))]
+}
+
+pairs_in <- read_csv("geocoding/input/drc_dps_site_pairs.csv", show_col_types = FALSE)
+net_size <- with(count(pairs_in, network), setNames(n, network))
+```
+
+How long does it take a Provincial Health Division (*Division Provinciale de la Santé*, **DPS**) team to reach the malaria entomological sentinel sites it supervises in the Democratic Republic of the Congo? And how much of the country lies within reach of a site? We compare three configurations of the national network under the same 2020 travel-time surfaces: the `r net_size[["2003_2005"]]` historical sites (2003–2005), the `r net_size[["2014"]]` sites of 2014, and the `r net_size[["2014"]] + net_size[["2021_expansion"]]` locatable sites of the 2021 proposal.
+
+::: {.callout-tip appearance="simple" icon="false" title="How to read this page"}
+Each block of code is either **pulled from the pipeline's scripts while this page renders** (its file name is shown above it) or **code this page runs on the saved outputs**. Outputs appear directly under the code that made them. The slow steps, geocoding requests and travel-time modelling, are shown but not re-run: the page reads their saved results. Long scripts are folded; *</> Code → Show All Code* at the top right opens everything.
+:::
+
+# The workflow at a glance {#sec-glance .unnumbered}
+
+Each numbered box is a section of this page. Click a box to jump to it.
+
+::: {.column-page-right}
+
+```{mermaid}
+%%| echo: false
+flowchart TB
+  subgraph geocoding ["Geocoding"]
+    direction LR
+    wb[("Workbooks<br/>data/input/*.xlsx")] --> reg["Site registry<br/>extract_sentinel_sites_26.py"]
+    reg --> s1["<b>1 · Multi-provider geocoding</b><br/>drc-geocoding-workflow.qmd<br/>drc-dps-site-pairs.qmd"]
+    s1 --> inputs["Analysis inputs<br/>build_walking_inputs.R"]
+  end
+  subgraph analysis ["Analysis: 06_run_analysis.R"]
+    direction LR
+    s2["<b>2 · Network evolution</b><br/>R/01"] --> s3["<b>3 · Accessibility surfaces</b><br/>R/02"]
+    s3 --> s4["<b>4 · Travel times and routes</b><br/>R/03, R/04, R/05"]
+  end
+  subgraph quarto ["Quarto documents"]
+    direction LR
+    unified[("output/unified/<br/>output/poster/")] --> s5["<b>5 · Report and poster</b><br/>ecr_final_report.qmd<br/>ecr_poster.qmd"]
+    s5 --> s6["<b>6 · Reproduce it</b>"]
+  end
+  geocoding --> analysis --> quarto
+  click s1 "#sec-geocoding"
+  click s2 "#sec-network"
+  click s3 "#sec-surfaces"
+  click s4 "#sec-travel"
+  click s5 "#sec-quarto"
+  click s6 "#sec-reproduce"
+```
+
+:::
+
+# Geocoding: the interactive map {#sec-geocoding}
+
+Every sentinel site and DPS office was geocoded independently by Google, GRID3, Nominatim and Photon. Each answer went through a quality gate, and the sources were cross-checked against each other. Two coordinate sets were kept: `google_first`, which the analysis used, and `open_first`, built from open sources, which may be published. This one chunk draws the map from the saved `open_first` outputs.
+
+::: {.column-page-right}
+
+```{r}
+#| label: geocoding-map
+#| filename: "this page, adapted from the map chunk in geocoding/pipeline/drc-geocoding-workflow.qmd"
+
+geo <- "geocoding/output"
+read_geo <- \(file) read_csv(file.path(geo, file), show_col_types = FALSE)
+
+sites_open  <- read_geo("drc_sentinel_sites_geocoded_open_first.csv")
+dps_open    <- read_geo("drc_dps_geocoded_open_first.csv")
+review_open <- read_geo("drc_geocoding_review_open_first.csv")
+pairs_open  <- read_geo("drc_dps_site_pairs_open_first.csv")
+
+# The network each site entered (network names start with their year)
+entered <- pairs_open |>
+  group_by(site_id) |>
+  summarise(network = min(network))
+
+geo_sites <- sites_open |>
+  filter(geocode_status != "google") |>   # open sources only
+  left_join(entered, by = "site_id") |>
+  mutate(review = site_id %in% review_open$site_id)
+
+provider_colours <- c(grid3 = "#1b9e77", nominatim = "#d95f02", photon = "#e7298a")
+pal <- colorFactor(unname(provider_colours), levels = names(provider_colours))
+
+layer <- c(
+  "2003_2005"      = "Sites: historical (2003–2005)",
+  "2014"           = "Sites: added in 2014",
+  "2021_expansion" = "Sites: proposed in 2021"
+)
+
+geo_map <- leaflet(height = 620) |> addTiles()
+
+for (n in names(layer)) {
+  geo_map <- geo_map |>
+    addCircleMarkers(
+      data = filter(geo_sites, network == n),
+      lng = ~longitude, lat = ~latitude, group = layer[[n]],
+      radius = 8, color = ~pal(geocode_status), fillColor = ~pal(geocode_status),
+      weight = ~if_else(review, 3, 1), fillOpacity = ~if_else(review, 0, 0.8),
+      label = ~sentinel_site,
+      popup = ~paste0(
+        "<b>", sentinel_site, "</b> (", province, ")<br>",
+        "<b>Source:</b> ", geocode_status, ", rung ", resolved_at_rung, "<br>",
+        "<b>Matched:</b> ", matched_address, "<br>",
+        "<b>Confidence:</b> ", confidence, "<br>",
+        "<b>Cross-check:</b> ", crosscheck, " (", crosscheck_note, ")"
+      )
+    )
+}
+
+geo_map |>
+  addCircleMarkers(
+    data = dps_open |>
+      filter(geocode_status != "google") |>
+      distinct(chef_lieu, .keep_all = TRUE),   # one marker per DPS seat
+    lng = ~longitude, lat = ~latitude, group = "DPS offices",
+    radius = 5, color = "white", weight = 1.5,
+    fillColor = "#1F2D3D", fillOpacity = 1,
+    label = ~paste("DPS seat:", chef_lieu),
+    popup = ~paste0("<b>DPS seat: ", chef_lieu, "</b><br>",
+                    "<b>Source:</b> ", geocode_status, "<br>",
+                    "<b>Confidence:</b> ", confidence)
+  ) |>
+  addLegend("bottomright", pal = pal, values = names(provider_colours),
+            title = "Source (open_first)", opacity = 1) |>
+  addLayersControl(
+    overlayGroups = c(unname(layer), "DPS offices"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+:::
+
+*The map shows `open_first` coordinates only. Open sources placed `r nrow(geo_sites)` of `r nrow(sites_open)` sites. The colour is the source that placed each point, and hollow circles are the `r sum(geo_sites$review)` sites the cross-check sent to review. The analysis itself used the `google_first` coordinates, which Google's terms keep off non-Google maps. Toggle the networks and the DPS offices at the top right.*
+
+# Network evolution {#sec-network}
+
+`R/01_spatial_expansion_sentinel_sites.R` reads the three site lists the geocoding produced (`output/ss_11.csv`, `output/ss_26.csv`, `output/network_51/ss_51.csv`). It labels each site by when it joined the network and draws the three maps of Figure 1. The script's sections 1–8 run below exactly as written. Only its last two sections, which save the PNGs, are left out, so this page writes nothing.
+
+```{r}
+#| label: s2-off
+
+# Dissolving GRID3's 519 health zones into provinces takes about 80 s with
+# spherical geometry (s2). Planar geometry takes about 10 s and draws the same
+# outlines at this map scale.
+old_s2 <- sf::sf_use_s2(FALSE)
+```
+
+```{r}
+#| label: r01
+#| results: hold
+#| code-fold: true
+#| code-summary: "R/01 sections 1–8: read the sites, classify, validate, load the boundaries, define make_map(). Runs here."
+#| filename: "R/01_spatial_expansion_sentinel_sites.R"
+#| code: !expr 'excerpt("R/01_spatial_expansion_sentinel_sites.R", "# 1. Load sentinel-site data", "# 9. Save Figure 1")'
+```
+
+The table above is printed by the script's own validation step: every network contains the earlier sites plus its additions. Section 8 defined `make_map()`, so drawing Figure 1 takes one call:
+
+::: {.column-page-right}
+
+```{r}
+#| label: fig1-live
+#| fig-width: 18
+#| fig-height: 7.5
+#| fig-dpi: 110
+
+sf::sf_use_s2(old_s2)
+make_map(show_labels = FALSE)
+```
+
+:::
+
+The report and the poster use the copies saved by the script's next section. That section also writes the poster's 300-dpi copy:
+
+```{r}
+#| eval: false
+#| filename: "R/01_spatial_expansion_sentinel_sites.R"
+#| code: !expr 'excerpt("R/01_spatial_expansion_sentinel_sites.R", "# 9. Save Figure 1", "rm(p_clean)")'
+```
+
+# Accessibility surfaces {#sec-surfaces}
+
+`R/02_accessibility.R` turns travel speed into travel time:
+
+- A **friction surface** is a Malaria Atlas Project (MAP) raster that gives, for each ~1 km cell, the minutes needed to cross it. It comes in a walking-only and a motorised version (2020).
+- A **transition layer** turns the raster into a network in which each cell is linked to its neighbours, weighted by how easy the move is.
+- **Cumulative cost** (`accCost`) then gives every cell its travel time to the nearest of a set of starting points: the sentinel sites, or the DPS offices.
+
+These steps take minutes per surface, so they are shown here, not run:
+
+```{r}
+#| eval: false
+#| filename: "R/02_accessibility.R: prepare_transition() and calculate_accessibility()"
+#| code: !expr 'c(excerpt("R/02_accessibility.R", "    fr <- malariaAtlas::getRaster(", "    stopifnot("), "", "    # ⋯", "", excerpt("R/02_accessibility.R", "    tr <- gdistance::transition(", "    stopifnot("), "", "    # ⋯", "", excerpt("R/02_accessibility.R", "    # Cost is in minutes; convert to hours", "    source_hours <-"))'
+```
+
+Each result is saved as a GeoTIFF in `output/unified/`, one per network, mode and destination. Reading one back:
+
+```{r}
+#| label: raster
+
+walk51 <- terra::rast("output/unified/accessibility_sentinel_walking_51.tif")
+walk51
+```
+
+```{r}
+#| label: raster-plot
+#| fig-width: 8
+#| fig-height: 7
+
+# A quick look: walking hours to the nearest of the 51 sites
+terra::plot(
+  terra::aggregate(walk51, fact = 4),   # coarser cells, for speed
+  breaks = c(0, 6, 12, 24, 48, 72, Inf),
+  col = hcl.colors(6, "YlGnBu", rev = TRUE),
+  main = "Walking hours to the nearest sentinel site, 51 sites"
+)
+```
+
+The finished maps in the report and the poster come from R/02's plotting function, called once per figure:
+
+```{r}
+#| eval: false
+#| filename: "R/02_accessibility.R"
+#| code: !expr 'excerpt("R/02_accessibility.R", "# 17. Generate the four accessibility figures", "# 18. Record the modelling configuration")'
+```
+
+::: {.column-page-right}
+::: {.panel-tabset}
+
+## Walking → nearest site
+
+![Walking-only travel time to the nearest sentinel site for the three networks (poster Figure 2). `output/unified/FigureS1_walking_nearest_sentinel_sites.png`](output/unified/FigureS1_walking_nearest_sentinel_sites.png){fig-alt="Walking accessibility to the nearest sentinel site"}
+
+## Motorised → nearest site
+
+![Motorised travel time to the nearest sentinel site for the three networks (poster Figure 3). `output/unified/FigureS2_motorized_nearest_sentinel_sites.png`](output/unified/FigureS2_motorized_nearest_sentinel_sites.png){fig-alt="Motorised accessibility to the nearest sentinel site"}
+
+## Walking → nearest DPS
+
+![Walking-only travel time to the nearest DPS office, historical and current offices. `output/unified/Figure2_walking_accessibility_final.png`](output/unified/Figure2_walking_accessibility_final.png){fig-alt="Walking accessibility to the nearest DPS office"}
+
+## Motorised → nearest DPS
+
+![Motorised travel time to the nearest DPS office, historical and current offices. `output/unified/Figure3_motorized_accessibility_final.png`](output/unified/Figure3_motorized_accessibility_final.png){fig-alt="Motorised accessibility to the nearest DPS office"}
+
+:::
+:::
+
+`R/05_results_summary.R` then measures how much of the country lies within each threshold, and saves the result as a table. Reading the two thresholds the report and poster use:
+
+```{r}
+#| label: coverage
+
+coverage <- read_csv(
+  "output/unified/Table_spatial_accessibility_summary.csv",
+  show_col_types = FALSE
+)
+
+coverage |>
+  filter((mode == "walking" & threshold_hours == 24) |
+           (mode == "motorized" & threshold_hours == 6)) |>
+  transmute(network, indicator = paste0(mode, ", ≤ ", threshold_hours, " h"),
+            percent_modelled_area) |>
+  pivot_wider(names_from = network, values_from = percent_modelled_area,
+              names_prefix = "sites_") |>
+  kable(digits = 1, col.names = c("Share of the DRC within", "11 sites (%)",
+                                  "26 sites (%)", "51 sites (%)"))
+```
+
+# Travel times and routes {#sec-travel}
+
+For supervision, what counts is the journey from each DPS office to *its own* sites. `R/03_assigned_travel_time.R` finds the **least-cost path**, the route through the transition layer with the smallest total travel time, for every DPS and site at once. It then keeps each DPS's assigned journeys:
+
+```{r}
+#| eval: false
+#| filename: "R/03_assigned_travel_time.R: calculate_network()"
+#| code: !expr 'excerpt("R/03_assigned_travel_time.R", "  # Result: minutes from each DPS to every site", "  # Save full DPS-to-site matrix")'
+```
+
+`R/04_walking_routes.R` traces the same walking paths as lines, to measure them in kilometres:
+
+```{r}
+#| eval: false
+#| filename: "R/04_walking_routes.R: calculate_routes()"
+#| code: !expr 'c(excerpt("R/04_walking_routes.R", "      path <- gdistance::shortestPath(", "      path_sf <- sf::st_as_sf(path)"), "", "      # ⋯", "", excerpt("R/04_walking_routes.R", "      # Geodesic length of the modelled walking route", "      route_status <- \"calculated\""))'
+```
+
+R/03 saves one row per journey and travel mode. `R/05_results_summary.R` starts by reading that table; its first lines run here as written:
+
+```{r}
+#| label: r05-read
+#| filename: "R/05_results_summary.R"
+#| code: !expr 'excerpt("R/05_results_summary.R", "journeys <- readr::read_csv(", "finite_median <- function(x) {")'
+```
+
+```{r}
+#| label: journeys-peek
+
+journeys |>
+  select(network, mode, province, dps_office, sentinel_site,
+         travel_hours, straight_km) |>
+  slice_head(n = 5) |>
+  kable(digits = 1)
+```
+
+Its section 7 draws Figure 4 from that table. The code runs here as written, up to the `ggsave()` that would save it:
+
+```{r}
+#| label: r05-fig4
+#| code-fold: true
+#| code-summary: "R/05 section 7: the Figure 4 plot. Runs here."
+#| filename: "R/05_results_summary.R"
+#| code: !expr 'excerpt("R/05_results_summary.R", "# 7. Figure 4 — Assigned journey times", "ggsave(")'
+```
+
+```{r}
+#| label: fig4-live
+#| fig-width: 10
+#| fig-height: 8
+#| out-width: "80%"
+
+p_journeys
+```
+
+The same table gives the headline numbers for each network:
+
+```{r}
+#| label: travel-summary
+
+routes <- read_csv(
+  "output/unified/walking_route_distances.csv",
+  show_col_types = FALSE
+)
+
+journeys |>
+  select(network, mode, province, sentinel_site, travel_hours) |>
+  pivot_wider(names_from = mode, values_from = travel_hours) |>
+  left_join(select(routes, network, province, sentinel_site, walking_route_km),
+            by = c("network", "province", "sentinel_site")) |>
+  group_by(network) |>
+  summarise(
+    journeys = n(),
+    walking_h = median(walking),
+    walking_over_24h = sum(walking > 24),
+    motorised_h = median(motorized),
+    route_km = median(walking_route_km)
+  ) |>
+  kable(digits = 1, col.names = c("Network", "Journeys", "Median walking (h)",
+                                  "Walking > 24 h", "Median motorised (h)",
+                                  "Median walking route (km)"))
+```
+
+```{r}
+#| label: proposed
+#| include: false
+
+proposed <- filter(journeys, mode == "walking", stage == "2021 proposed")
+```
+
+Of the `r nrow(proposed)` sites proposed in 2021, `r sum(proposed$travel_hours > 24)` are more than 24 walking hours from their DPS office (median `r sprintf("%.1f", median(proposed$travel_hours))` h).
+
+# Quarto: the report and the poster {#sec-quarto}
+
+The report and the poster are Quarto documents that read the saved outputs while they render. The report's headline results (coverage, travel times, route lengths, its tables and figures) and every result on the poster are computed from those tables, not typed. Re-running the analysis and re-rendering updates them.
+
+## One source, two formats
+
+The report's header asks for a PDF (through LaTeX) and a self-contained HTML page, numbered sections, and citations from a BibTeX file. `quarto render ecr_final_report.qmd` builds both from the same source.
+
+```{r}
+#| eval: false
+#| lang: yaml
+#| filename: "ecr_final_report.qmd: YAML header"
+#| code: !expr 'excerpt("ecr_final_report.qmd", "date: \"2026-10-21\"", "---")'
+```
+
+## Numbers are computed while the document renders
+
+The report's setup chunk reads the tables once, and small functions look values up:
+
+```{r}
+#| eval: false
+#| filename: "ecr_final_report.qmd: setup chunk"
+#| code: !expr 'c(excerpt("ecr_final_report.qmd", "out_dir <- \"output/unified\"", "stopifnot("), "", "# ⋯", "", excerpt("ecr_final_report.qmd", "coverage_pct <- function(network_id, mode_id, hours) {", "# Define unique geographical DPS-to-site journeys"))'
+```
+
+The text then calls them inline with `` `r knitr::inline_expr("...")` ``. This is the abstract's *Results* paragraph as it is written in the source:
+
+```{r}
+#| eval: false
+#| lang: markdown
+#| filename: "ecr_final_report.qmd: abstract"
+#| code: !expr 'excerpt("ecr_final_report.qmd", "**Results:** Expansion", "**Conclusions:**")'
+```
+
+This page runs the report's own setup chunk and then knits that paragraph, the same way `quarto render` does:
+
+```{r}
+#| label: report-knit
+
+report <- new.env()
+eval(parse(text = excerpt("ecr_final_report.qmd", "#| label: setup", "```")),
+     envir = report)
+
+results_md <- excerpt("ecr_final_report.qmd", "**Results:** Expansion", "**Conclusions:**")
+```
+
+::: {.callout-note appearance="simple" icon="false" title="The same paragraph, rendered"}
+```{r}
+#| echo: false
+#| results: asis
+cat(knitr::knit_child(text = results_md, envir = report, quiet = TRUE))
+```
+:::
+
+Figures come from the saved PNGs. A figure with a `#fig-` label gets a number, and `@fig-sentinel` in the text becomes a clickable link to it, in both the PDF and the HTML:
+
+```{r}
+#| eval: false
+#| lang: markdown
+#| filename: "ecr_final_report.qmd: Results"
+#| code: !expr 'excerpt("ecr_final_report.qmd", "## National geographical accessibility to sentinel sites", "### Walking accessibility")'
+```
+
+## The poster: Quarto and Typst
+
+The poster is a Quarto document too, rendered with **Typst**, a modern typesetting system. Its layout is written in Typst inside the `.qmd`: every box, bar and picture placed in inches on a 48 × 36 in page. The numbers come from the same tables through inline R, and the figures from the 300-dpi copies the R scripts save to `output/poster/`.
+
+```{r}
+#| eval: false
+#| lang: yaml
+#| filename: "ecr_poster.qmd: YAML header"
+#| code: !expr 'excerpt("ecr_poster.qmd", "format:", "---")'
+```
+
+```{r}
+#| eval: false
+#| filename: "ecr_poster.qmd: setup chunk"
+#| code: !expr 'excerpt("ecr_poster.qmd", "# Every result on the poster", "```")'
+```
+
+One results paragraph, as written in the poster's source:
+
+```{r}
+#| eval: false
+#| lang: typst
+#| filename: "ecr_poster.qmd"
+#| code: !expr 'excerpt("ecr_poster.qmd", "#body-text(16.1089", "#caption(17.1826")'
+```
+
+The same paragraph after knitting, which is what Quarto hands to Typst:
+
+```{r}
+#| label: poster-knit
+#| results: asis
+
+poster <- new.env()
+eval(parse(text = excerpt("ecr_poster.qmd", "#| label: setup", "```")),
+     envir = poster)
+
+paragraph <- excerpt("ecr_poster.qmd", "#body-text(16.1089", "#caption(17.1826")
+cat("```typst",
+    knitr::knit_child(text = paragraph, envir = poster, quiet = TRUE),
+    "```", sep = "\n")
+```
+
+```{r}
+#| label: poster-preview
+#| echo: false
+
+preview <- tempfile(fileext = ".png")
+system2("pdftoppm", c("-png", "-r", "40", "-f", "1", "-l", "1", "-singlefile",
+                      shQuote("ecr_poster.pdf"),
+                      shQuote(sub("\\.png$", "", preview))))
+htmltools::a(
+  href = "ecr_poster.pdf",
+  htmltools::img(src = knitr::image_uri(preview), width = "100%",
+                 alt = "The poster, rendered by Quarto and Typst")
+)
+```
+
+*The rendered poster, `ecr_poster.pdf` (click to open the PDF).*
+
+## This page is Quarto as well
+
+Each pipeline code block above is a chunk with no code of its own. A chunk option fills it from the script while the page renders, through the helper defined in this page's setup:
+
+```{{r}}
+#| eval: false
+#| filename: "R/03_assigned_travel_time.R"
+#| code: !expr 'excerpt("R/03_assigned_travel_time.R",
+#|                      "  # Result: minutes from each DPS to every site",
+#|                      "  # Save full DPS-to-site matrix")'
+```
+
+```{r}
+#| eval: false
+#| filename: "workflow_demo.qmd: setup chunk"
+#| code: !expr 'excerpt("workflow_demo.qmd", "excerpt <- function(file, from, to) {", "pairs_in <- read_csv(")'
+```
+
+# Reproduce it {#sec-reproduce}
+
+The commands for this pipeline, pulled from the *Commands* block of `AGENTS.md` and put in pipeline order: registry, geocoding, pairs, analysis inputs, analysis, report and poster, then the offline tests. Requests only go out for answers not already in the cache, and the default analysis run reuses the validated travel times.
+
+```{bash}
+#| eval: false
+#| filename: "AGENTS.md: Commands, in pipeline order"
+#| code: !expr 'c(excerpt("AGENTS.md", "once per shell, from the repo root", "# Geocoding tests"), "", excerpt("AGENTS.md", "# Rebuild the 26-site input", "# Accessibility inputs"), "", excerpt("AGENTS.md", "# Geocoding run.", "# Provider benchmark"), "", excerpt("AGENTS.md", "# Accessibility inputs", strrep("\x60", 3)), "", excerpt("AGENTS.md", "# Geocoding tests", "# Geocoding run."))'
+```
+
+**The deliverables.** Keep these files next to this page when copying it to another laptop.
+
+- [Final report (HTML)](ecr_final_report.html)
+- [Final report (PDF)](ecr_final_report.pdf)
+- [Poster (PDF)](ecr_poster.pdf)
